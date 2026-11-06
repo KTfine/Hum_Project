@@ -8,6 +8,8 @@ TODO.md
 *.py[cod]
 .pytest_cache/
 .cache/
+.runtime/
+.download-venv/
 .env
 .env.*
 !.env.example

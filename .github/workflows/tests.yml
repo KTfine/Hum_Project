@@ -1,0 +1,44 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-client.txt
+      - name: Install client test dependencies
+        run: python -m pip install -r requirements-client.txt
+      - name: Run client tests
+        run: python -m unittest discover -s tests -v
+      - name: Check shell syntax
+        run: |
+          for script in scripts/cloud_*.sh backend/scripts/*.sh backend/slurm/*.sbatch; do
+            bash -n "$script"
+          done
+      - name: Fetch pinned patch targets
+        run: |
+          commit=47709a9210dfd71afa76c058e017fc8c4db5c8d2
+          target="$RUNNER_TEMP/minicpm-patch-fixture"
+          for file in gateway.py core/processors/pytorch_backend.py MiniCPMO45/modeling_minicpmo_unified.py; do
+            mkdir -p "$target/$(dirname "$file")"
+            curl --fail --location --retry 3 "https://raw.githubusercontent.com/OpenBMB/MiniCPM-o-Demo/$commit/$file" -o "$target/$file"
+          done
+      - name: Apply patches and test decoder options
+        env:
+          MINICPM_UPSTREAM_DIR: ${{ runner.temp }}/minicpm-patch-fixture
+        run: |
+          python backend/scripts/apply_upstream_patches.py "$MINICPM_UPSTREAM_DIR"
+          python backend/scripts/apply_upstream_patches.py "$MINICPM_UPSTREAM_DIR"
+          python -m unittest discover -s backend/tests -p test_duplex_session_options.py -v

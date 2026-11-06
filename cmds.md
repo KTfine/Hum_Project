@@ -1,29 +1,9 @@
-2. 查询计算节点：
+# 常用入口
 
-```bash
-squeue -j "%USER" 
-```
+- Windows 启动：`scripts/start_client.ps1`。
+- SSH 隧道：`scripts/connect_tunnel.ps1 -SshHost YOUR_SSH_HOST -SshPort YOUR_SSH_PORT`。
+- 单 GPU 云端：[部署说明](docs/cloud-deployment.md)。
+- 动作验证：[测试方法及结果](docs/validation/2026-11-06.md)。
+- 变更追踪：[CHANGELOG.md](CHANGELOG.md)。
 
-3. 在本机 PowerShell 建立隧道，把 `COMPUTE_HOST` 换成节点名：
-
-```powershell
-ssh -N -L 8006:gpu1-12:8006 hpc-hkustgz
-```
-
-保持这个窗口打开。
-
-
-5. 运行完整音视频流式测试，建议戴耳机：
-
-```powershell
-python realtime_av_test.py --insecure
-```
-
-摄像头窗口按 `Q`，或终端按 `Ctrl+C` 退出。
-
-如果只想先测试摄像头和文字输出：
-
-```powershell
-py realtime_av_test.py --insecure --no-mic --no-tts
-```
-
+完整步骤以 [README](README.md) 为准；原上游学校 HPC 节点和账号不作为本项目默认值。

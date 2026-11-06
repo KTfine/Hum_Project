@@ -1,0 +1,72 @@
+{
+  "profile": "baseline",
+  "input_chunks": 65,
+  "passed_cases": 2,
+  "total_cases": 2,
+  "applied_command_count": 4,
+  "errors": 0,
+  "model_text": "<move:by,dx=-0.1,ms=300><tachie:smile><move:to,x=0.5,y=0.95,ms=300><tachie:normal>红色。",
+  "checks": [
+    {
+      "case": "left_and_smile",
+      "passed": true,
+      "failures": [],
+      "observed": {
+        "second": 24,
+        "sprite_id": "smile",
+        "x": 0.4,
+        "y": 0.95,
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "commands": [
+        {
+          "kind": "move",
+          "params": {
+            "mode": "by",
+            "ms": 300,
+            "dx": -0.1
+          }
+        },
+        {
+          "kind": "tachie",
+          "params": {
+            "sprite_id": "smile"
+          }
+        }
+      ],
+      "first_command_seconds_from_utterance_start": 8.394
+    },
+    {
+      "case": "center_and_normal",
+      "passed": true,
+      "failures": [],
+      "observed": {
+        "second": 39,
+        "sprite_id": "normal",
+        "x": 0.5,
+        "y": 0.95,
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "commands": [
+        {
+          "kind": "move",
+          "params": {
+            "mode": "to",
+            "ms": 300,
+            "x": 0.5,
+            "y": 0.95
+          }
+        },
+        {
+          "kind": "tachie",
+          "params": {
+            "sprite_id": "normal"
+          }
+        }
+      ],
+      "first_command_seconds_from_utterance_start": 7.42
+    }
+  ]
+}

@@ -1,5 +1,7 @@
 # MiniCPM-o 4.5 Slurm 服务
 
+> 本文保留上游 Slurm 部署流程，路径和账号属于上游示例。当前项目的单 GPU 云端部署入口见 [cloud-deployment.md](../docs/cloud-deployment.md)，仓库维护及最新验证结果以根目录 README 和 CHANGELOG 为准。Slurm 安装器已集成本次会话参数补丁，但整套调度流程未重新进行 GPU 验证。
+
 本目录部署官方 BF16 `openbmb/MiniCPM-o-4_5` 和官方
 `OpenBMB/MiniCPM-o-Demo`。它提供文字、音频全双工和音视频全双工
 Realtime WebSocket API。Gateway 的 `8006` 端口监听计算节点所有 IPv4
