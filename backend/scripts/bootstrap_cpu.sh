@@ -5,23 +5,12 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/common.sh"
 
-GATEWAY_PATCH="${SERVICE_ROOT}/patches/gateway-internal-host.patch"
-
-apply_gateway_patch() {
+apply_upstream_patches() {
     local changed_files
-    [[ -f "${GATEWAY_PATCH}" ]] || die "missing Gateway patch: ${GATEWAY_PATCH}"
-
-    if git -C "${UPSTREAM_DIR}" apply --reverse --check "${GATEWAY_PATCH}" >/dev/null 2>&1; then
-        log "Gateway split-listener patch is already applied"
-    elif git -C "${UPSTREAM_DIR}" apply --check "${GATEWAY_PATCH}" >/dev/null 2>&1; then
-        git -C "${UPSTREAM_DIR}" apply "${GATEWAY_PATCH}"
-        log "applied Gateway split-listener patch"
-    else
-        die "Gateway checkout does not match the pinned patch"
-    fi
+    python "${SCRIPT_DIR}/apply_upstream_patches.py" "${UPSTREAM_DIR}"
 
     changed_files="$(git -C "${UPSTREAM_DIR}" diff --name-only)"
-    [[ "${changed_files}" == "gateway.py" ]] || \
+    [[ "${changed_files}" == $'MiniCPMO45/modeling_minicpmo_unified.py\ncore/processors/pytorch_backend.py\ngateway.py' ]] || \
         die "unexpected tracked changes in official Demo checkout: ${changed_files:-none}"
 }
 
@@ -48,7 +37,7 @@ else
     git -C "${UPSTREAM_DIR}" checkout --detach "${DEMO_COMMIT}"
 fi
 
-apply_gateway_patch
+apply_upstream_patches
 
 log "installing the official Demo environment with ${face_python}"
 (
