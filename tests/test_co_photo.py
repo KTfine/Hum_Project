@@ -122,6 +122,17 @@ class CoPhotoTests(unittest.TestCase):
         self.dispatch('<photo:enter>')
         self.assertIn('"co_photo_active": true', client.build_control_prompt(self.canvas, args))
 
+    def test_action_diagnostic_is_explicit_and_requires_activation(self):
+        args = client.parse_args([])
+        with self.assertRaises(ValueError):
+            client.build_control_prompt(self.canvas, args, action_only=True)
+        self.dispatch('<photo:enter>')
+        normal = client.build_control_prompt(self.canvas, args)
+        diagnostic = client.build_control_prompt(self.canvas, args, action_only=True)
+        self.assertIn('<speak:', normal)
+        self.assertNotIn('<speak:', diagnostic)
+        self.assertIn('"co_photo_active": true', diagnostic)
+
     def test_active_overlay_is_transparent_moves_and_does_not_mutate_camera(self):
         inactive = self.canvas.render_scene(self.frame)
         self.assertEqual(inactive[85, 50].tolist(), [10, 20, 30])
@@ -162,6 +173,21 @@ class CoPhotoTests(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             asyncio.run(client.receive_realtime_outputs(Socket(), stop, canvas, client.SpeechQueue(),
                         verbose=False, event_log=log, co_photo=canvas.co_photo))
+
+
+class ActionDiagnosticCliTests(unittest.TestCase):
+    def test_action_only_live_test_requires_explicit_opt_in(self):
+        self.assertFalse(client.parse_args([]).action_only_test)
+        self.assertTrue(client.parse_args(['--action-only-test']).action_only_test)
+
+    def test_action_only_live_test_rejects_missing_camera_and_prompt_override(self):
+        for args in [
+            ['--action-only-test', '--no-camera'],
+            ['--action-only-test', '--prompt', 'custom'],
+        ]:
+            with self.subTest(args=args), contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    client.parse_args(args)
 
 
 if __name__ == '__main__':

@@ -32,6 +32,9 @@ if ($Profile -eq 'co-photo') {
     $utterances['photo_move_right.wav'] = '请你自己移动到画面右边四分之三的位置。'
     $utterances['photo_reenter.wav'] = '我们继续一起合照吧。'
     $utterances['photo_scale_denied.wav'] = '把你自己缩小一半。'
+    $utterances['photo_hold.wav'] = '你先保持这个位置，站在原地不要动。'
+    $utterances['photo_recommend.wav'] = '这张合照你来推荐一个方案，请你站在我身旁。'
+    $utterances['photo_observe.wav'] = '你觉得我现在的表情怎么样？请简短说一下。'
 }
 $synth = New-Object System.Speech.Synthesis.SpeechSynthesizer
 try {

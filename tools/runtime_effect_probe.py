@@ -42,8 +42,12 @@ async def run(args):
         if camera is not None:
             camera.start()
             print('CAMERA_FRAME', camera.latest_frame().shape, flush=True)
+        if getattr(args, 'start_co_photo', False):
+            if not getattr(args, 'co_photo', False) or not canvas.activate_co_photo():
+                raise ValueError('--start-co-photo requires --co-photo and a fresh camera frame')
+            logger.record('test.co_photo_initialized', source='explicit_probe_flag')
         prompt_args = client.parse_args([])
-        prompt = client.build_control_prompt(canvas, prompt_args)
+        prompt = client.build_control_prompt(canvas, prompt_args, action_only=getattr(args, 'action_only', False))
         if args.prompt_file:
             prompt = Path(args.prompt_file).read_text(encoding='utf-8')
         init = client.build_session_init(prompt, use_tts=False)
@@ -138,4 +142,11 @@ if __name__ == '__main__':
     parser.add_argument('--instructions-file')
     parser.add_argument('--generation-config')
     parser.add_argument('--co-photo', action='store_true', help='Test the normal invitation gate and move-only permissions')
-    asyncio.run(run(parser.parse_args()))
+    parser.add_argument('--start-co-photo', action='store_true', help='Initialize this diagnostic as already active; does not test invitation recognition')
+    parser.add_argument('--action-only', action='store_true', help='Use the short movement-only diagnostic prompt; excludes photography conversation')
+    args = parser.parse_args()
+    if args.start_co_photo and not args.co_photo:
+        parser.error('--start-co-photo requires --co-photo')
+    if args.action_only and (not args.co_photo or not args.start_co_photo or args.prompt_file):
+        parser.error('--action-only requires --co-photo --start-co-photo and cannot override --prompt-file')
+    asyncio.run(run(args))

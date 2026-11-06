@@ -215,6 +215,44 @@ class SpriteControllerTests(unittest.TestCase):
             module.SpriteState("smile", 0.3, 0.8, 1.4, -12.0),
         )
 
+    def test_zero_offset_hold_freezes_current_position_without_finishing_move(self):
+        from command_protocol import Command
+
+        module = importlib.import_module("realtime_av_test")
+        controller = module.SpriteController(
+            {"normal"}, module.SpriteState("normal", 0.2, 0.4, 1.0, 0.0)
+        )
+        controller.apply_command(
+            Command("move", {"mode": "to", "x": 0.8, "y": 0.8, "ms": 1000}), now=10.0
+        )
+        target = controller.apply_command(
+            Command("move", {"mode": "by", "dx": 0, "dy": 0, "ms": 0}), now=10.5
+        )
+        self.assertAlmostEqual(target.x, 0.5)
+        self.assertAlmostEqual(target.y, 0.6)
+        self.assertEqual(controller.state_at(12.0), target)
+
+    def test_hold_on_one_axis_preserves_other_animation_lanes(self):
+        from command_protocol import Command
+
+        module = importlib.import_module("realtime_av_test")
+        controller = module.SpriteController(
+            {"normal"}, module.SpriteState("normal", 0.2, 0.4, 1.0, 0.0)
+        )
+        controller.apply_command(
+            Command("move", {"mode": "to", "x": 0.8, "y": 0.8, "ms": 1000}), now=10.0
+        )
+        controller.apply_command(
+            Command("scale", {"mode": "to", "value": 2.0, "ms": 1000}), now=10.0
+        )
+        controller.apply_command(
+            Command("move", {"mode": "by", "dx": 0, "ms": 0}), now=10.5
+        )
+        state = controller.state_at(11.0)
+        self.assertAlmostEqual(state.x, 0.5)
+        self.assertAlmostEqual(state.y, 0.8)
+        self.assertAlmostEqual(state.scale, 2.0)
+
     def test_blank_command_does_not_change_state(self):
         from command_protocol import Command
 

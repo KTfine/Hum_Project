@@ -239,10 +239,17 @@ class SpriteController:
                         if name in params:
                             targets[name] = float(params[name])
                 else:
+                    # An explicit zero-duration, zero-offset move is a hold:
+                    # stop at the current position instead of snapping to an
+                    # unfinished animation's previous destination.
+                    hold = duration_ms == 0 and all(
+                        float(params.get(axis, 0)) == 0 for axis in ("dx", "dy")
+                    )
+                    base = current if hold else latest
                     if "dx" in params:
-                        targets["x"] = min(1.0, max(0.0, latest.x + float(params["dx"])))
+                        targets["x"] = min(1.0, max(0.0, base.x + float(params["dx"])))
                     if "dy" in params:
-                        targets["y"] = min(1.0, max(0.0, latest.y + float(params["dy"])))
+                        targets["y"] = min(1.0, max(0.0, base.y + float(params["dy"])))
             elif command.kind == "scale":
                 value = (
                     float(params["value"])
@@ -988,12 +995,17 @@ def make_tls_context(insecure: bool) -> ssl.SSLContext:
     return ssl.create_default_context()
 
 
-def build_control_prompt(canvas: CanvasSource, args: argparse.Namespace) -> str:
-    from prompt import STREAMING_COMMAND_PROMPT
+def build_control_prompt(
+    canvas: CanvasSource, args: argparse.Namespace, *, action_only: bool = False
+) -> str:
+    from prompt import STREAMING_COMMAND_PROMPT, CO_PHOTO_ACTION_DIAGNOSTIC_PROMPT
 
     if canvas.controller is None:
         raise RuntimeError("canvas has not been started")
-    return STREAMING_COMMAND_PROMPT.format(
+    if action_only and not canvas.co_photo.active:
+        raise ValueError("action-only diagnostics require an active co-photo session")
+    template = CO_PHOTO_ACTION_DIAGNOSTIC_PROMPT if action_only else STREAMING_COMMAND_PROMPT
+    return template.format(
         character_name=args.character_name,
         character_persona=args.character_persona,
         response_language="中文",
@@ -1030,6 +1042,8 @@ async def run_probe(
     )
     camera = None if args.no_camera else CameraSource(args.camera_device, stop_event)
     canvas.set_camera(camera)
+    if args.action_only_test:
+        canvas.WINDOW_TITLE = "Action-only diagnostic - already active - Q stops"
     microphone = None if args.no_mic else MicrophoneSource(audio_buffer, args.input_device)
     speech_queue = SpeechQueue()
     ws_url = normalize_video_ws_url(args.url)
@@ -1039,6 +1053,11 @@ async def run_probe(
         if camera is not None:
             camera.start()
         canvas.start()
+        if args.action_only_test:
+            if not canvas.activate_co_photo():
+                raise RuntimeError("action-only diagnostics require a fresh camera frame")
+            if event_log is not None:
+                event_log.record("test.co_photo_initialized", source="explicit_action_only_flag")
         if microphone is not None:
             microphone.start()
     except Exception:
@@ -1049,7 +1068,7 @@ async def run_probe(
         if camera is not None:
             camera.close()
         raise
-    system_prompt = args.prompt or build_control_prompt(canvas, args)
+    system_prompt = args.prompt or build_control_prompt(canvas, args, action_only=args.action_only_test)
 
     if event_log is not None:
         event_log.record(
@@ -1063,6 +1082,7 @@ async def run_probe(
             microphone_enabled=not args.no_mic,
             camera_enabled=not args.no_camera,
             camera_device=args.camera_device,
+            action_only_test=args.action_only_test,
         )
 
     print(f"[sprites] {', '.join(canvas.sprite_ids)}", flush=True)
@@ -1173,6 +1193,10 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument(
         "--prompt", help="override the generated streaming-command system prompt"
     )
+    parser.add_argument(
+        "--action-only-test", action="store_true",
+        help="Explicit live movement diagnostic: start co-photo active with the short action-only prompt",
+    )
     parser.add_argument("--character-name", default="早苗")
     parser.add_argument(
         "--character-persona",
@@ -1201,6 +1225,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--connect-timeout", type=float, default=10.0)
     parser.add_argument("--session-timeout", type=float, default=120.0)
     args = parser.parse_args(argv)
+    if args.action_only_test and (args.no_camera or args.prompt):
+        parser.error("--action-only-test requires a camera and cannot be combined with --prompt")
     if not 1 <= args.jpeg_quality <= 100:
         parser.error("--jpeg-quality must be between 1 and 100")
     if args.canvas_width <= 0 or args.canvas_height <= 0:
