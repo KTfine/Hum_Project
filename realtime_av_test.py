@@ -762,6 +762,7 @@ def dispatch_model_commands(
     event_log: FrontendEventLogger | None = None,
     *,
     verbose: bool = False,
+    allowed_actions: frozenset[str] | None = None,
 ) -> None:
     """Dispatch valid commands; invalid semantic commands are silently ignored."""
     for command in commands:
@@ -771,6 +772,10 @@ def dispatch_model_commands(
             if verbose:
                 print("[blank]", flush=True)
         else:
+            if allowed_actions is not None and command.kind not in allowed_actions:
+                if event_log is not None:
+                    event_log.record("command.blocked", command=asdict(command), reason="action_not_enabled")
+                continue
             try:
                 target = canvas.apply_command(command)
             except (TypeError, ValueError, RuntimeError) as exc:
@@ -809,9 +814,10 @@ async def receive_realtime_outputs(
     *,
     verbose: bool,
     event_log: FrontendEventLogger | None = None,
+    allowed_actions: frozenset[str] | None = None,
 ) -> None:
-    """Print raw deltas and dispatch complete streamed tag commands immediately."""
-    parser = StreamingCommandParser()
+    """Dispatch tag commands and adapt untagged model text into speech."""
+    parser = StreamingCommandParser(allow_plain_speech=True)
     active_response_id = None
     while not stop_event.is_set():
         raw = await websocket.recv()
@@ -828,12 +834,17 @@ async def receive_realtime_outputs(
                 print("[model] ", end="", flush=True)
                 active_response_id = response_id
             print(value, end="", flush=True)
+            previous_plain_count = parser.plain_speech_count
             commands = parser.feed(response_id, str(value))
             if event_log is not None:
+                if parser.plain_speech_count != previous_plain_count:
+                    event_log.record("parser.plain_text_adapted", response_id=response_id,
+                                     command_count=parser.plain_speech_count - previous_plain_count)
                 for command in commands:
                     event_log.record("parser.command", command=asdict(command))
             dispatch_model_commands(
-                commands, canvas, speech_queue, event_log, verbose=verbose
+                commands, canvas, speech_queue, event_log, verbose=verbose,
+                allowed_actions=allowed_actions,
             )
         elif kind in ("listen", "done"):
             parser.flush(response_id if kind == "done" else None)
@@ -982,6 +993,9 @@ async def run_probe(
                     speech_queue,
                     verbose=args.verbose,
                     event_log=event_log,
+                    # Co-photo activation is not implemented yet. The normal
+                    # client therefore permits speech, but no avatar actions.
+                    allowed_actions=frozenset(),
                 ),
                 name="realtime-receiver",
             )
