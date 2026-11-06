@@ -1,0 +1,12 @@
+upstream/
+models/MiniCPM-o-4_5/
+.cache/
+certs/
+data/
+tmp/
+logs/*
+!logs/.gitkeep
+models/*
+!models/.gitkeep
+__pycache__/
+*.pyc

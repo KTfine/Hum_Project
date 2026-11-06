@@ -1,0 +1,21 @@
+diff --git a/gateway.py b/gateway.py
+index 86ef8ea..24fc337 100644
+--- a/gateway.py
++++ b/gateway.py
+@@ -1490,6 +1490,7 @@ def main():
+     parser.add_argument("--port", type=int, default=None, help=f"Gateway port (default: {cfg.gateway_port})")
+     parser.add_argument("--internal-port", type=int, default=8007, help="Internal worker registration port")
+     parser.add_argument("--host", type=str, default="0.0.0.0", help="Host")
++    parser.add_argument("--internal-host", type=str, default="127.0.0.1", help="Internal worker registration host")
+     parser.add_argument("--max-queue-size", type=int, default=None, help="Max queue size")
+     parser.add_argument("--timeout", type=float, default=None, help="Request timeout (s)")
+     # 协议选择：默认 HTTPS，--http 可降级为 HTTP
+@@ -1559,7 +1560,7 @@ def main():
+         )
+         internal_config = uvicorn.Config(
+             internal_app,
+-            host=args.host,
++            host=args.internal_host,
+             port=args.internal_port,
+             log_level="info",
+         )
