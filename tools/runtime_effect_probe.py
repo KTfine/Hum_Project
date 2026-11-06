@@ -53,14 +53,21 @@ async def run(args):
         init = client.build_session_init(prompt, use_tts=False)
         if args.generation_config:
             init['payload']['config'].update(json.loads(args.generation_config))
+        managed = getattr(args, 'co_photo', False)
+        refresh_on_entry = managed and not canvas.co_photo.active and not args.prompt_file
+        speech_queue = client.SpeechQueue()
         websocket, created = await client.connect_and_open_session_with_retry(
             websockets.connect, client.normalize_video_ws_url(args.url), client.make_tls_context(True),
             init, connect_timeout=15, session_timeout=120, event_log=logger,
         )
         print('SESSION', created.get('session_id'), flush=True)
+        if managed and canvas.co_photo.active and not getattr(args, 'action_only', False):
+            client.request_co_photo_goal(canvas.co_photo, speech_queue, logger)
+            client.dispatch_model_commands([], canvas, speech_queue, logger, co_photo=canvas.co_photo)
         receiver = asyncio.create_task(client.receive_realtime_outputs(
-            websocket, stop, canvas, client.SpeechQueue(), verbose=True, event_log=logger,
-            co_photo=canvas.co_photo if getattr(args, 'co_photo', False) else None,
+            websocket, stop, canvas, speech_queue, verbose=True, event_log=logger,
+            co_photo=canvas.co_photo if managed else None,
+            defer_goal_question=refresh_on_entry,
         ))
         timeline = np.zeros(args.seconds * 16000, dtype='<f4')
         instructions = [(3, 'move_left_smile.wav'), (25, 'return_center.wav')]
@@ -80,6 +87,26 @@ async def run(args):
         for sequence in range(args.seconds):
             if stop.is_set() or receiver.done():
                 break
+            if refresh_on_entry and canvas.co_photo.active:
+                receiver.cancel()
+                await asyncio.gather(receiver, return_exceptions=True)
+                await client.close_model_session(websocket, 'co_photo_state_changed', logger)
+                prompt = client.build_control_prompt(canvas, prompt_args)
+                init = client.build_session_init(prompt, use_tts=False)
+                if args.generation_config:
+                    init['payload']['config'].update(json.loads(args.generation_config))
+                websocket, created = await client.connect_and_open_session_with_retry(
+                    websockets.connect, client.normalize_video_ws_url(args.url), client.make_tls_context(True),
+                    init, connect_timeout=15, session_timeout=120, event_log=logger,
+                )
+                logger.record('session.prompt_refresh', co_photo_active=True)
+                client.request_co_photo_goal(canvas.co_photo, speech_queue, logger)
+                client.dispatch_model_commands([], canvas, speech_queue, logger, co_photo=canvas.co_photo)
+                receiver = asyncio.create_task(client.receive_realtime_outputs(
+                    websocket, stop, canvas, speech_queue, verbose=True,
+                    event_log=logger, co_photo=canvas.co_photo,
+                ))
+                refresh_on_entry = False
             frame = camera.latest_frame() if camera is not None else None
             if args.visual_check and sequence >= 40 and frame is not None:
                 frame = frame.copy()

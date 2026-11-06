@@ -148,6 +148,18 @@ class CoPhotoTests(unittest.TestCase):
         self.assertEqual(moved[85, 50].tolist(), [10, 20, 30])
         np.testing.assert_array_equal(moved[85, 150], expected)
 
+    def test_badge_is_preview_only_in_both_modes(self):
+        for active in [False, True]:
+            if active:
+                self.dispatch('<photo:enter>')
+            preview = self.canvas.render_scene(self.frame)
+            model = self.canvas.render_scene(self.frame, show_status=False)
+            self.assertEqual(preview[0, 0].tolist(), [255, 255, 255])
+            self.assertEqual(model[0, 0].tolist(), [10, 20, 30])
+            jpeg = self.canvas.latest_jpeg(self.frame)
+            decoded = cv2.imdecode(np.frombuffer(jpeg, dtype=np.uint8), cv2.IMREAD_COLOR)
+            np.testing.assert_allclose(decoded[0, 0], [10, 20, 30], atol=4)
+
     def test_streamed_entry_closes_before_next_fragment_and_move_executes_before_turn_end(self):
         canvas, log, stop = self.canvas, self.log, self.stop
         class Socket:

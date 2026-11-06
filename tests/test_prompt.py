@@ -2,10 +2,10 @@ import unittest
 
 
 class StreamingCommandPromptTests(unittest.TestCase):
-    def render_prompt(self):
+    def render_prompt(self, template=None):
         import prompt
 
-        return prompt.STREAMING_COMMAND_PROMPT.format(
+        return (template or prompt.STREAMING_COMMAND_PROMPT).format(
             character_name="小航",
             character_persona="活泼但不打扰用户",
             response_language="中文",
@@ -17,25 +17,30 @@ class StreamingCommandPromptTests(unittest.TestCase):
             extra_instructions="保持简短。",
         )
 
-    def test_formats_runtime_context_and_documents_every_command(self):
+    def test_inactive_prompt_contains_context_and_only_inactive_commands(self):
         rendered = self.render_prompt()
 
         self.assertIn("小航", rendered)
-        self.assertIn("normal, smile, thinking", rendered)
-        self.assertIn("<speak:", rendered)
-        self.assertIn("<move:to,", rendered)
-        self.assertIn("<move:by,", rendered)
-        self.assertIn("<scale:to,", rendered)
-        self.assertIn("<scale:by,", rendered)
-        self.assertIn("<tachie:", rendered)
-        self.assertIn("<rotate:to,", rendered)
-        self.assertIn("<blank>", rendered)
+        self.assertIn("用户希望拍一张严肃的证件照", rendered)
+        self.assertIn("当前合照状态：OFF", rendered)
+        import re
+        self.assertEqual(set(re.findall(r'<([a-z]+)(?=[:>])', rendered)), {'speak', 'photo', 'blank'})
+
+    def test_active_prompt_retains_guidance_and_only_enabled_actions(self):
+        import prompt
+        import re
+        rendered = self.render_prompt(prompt.CO_PHOTO_COMMAND_PROMPT)
+        self.assertIn("当前合照状态：ON", rendered)
+        self.assertIn("真人姿势", rendered)
+        self.assertIn("可见表情", rendered)
+        self.assertIn("推荐", rendered)
+        self.assertEqual(set(re.findall(r'<([a-z]+)(?=[:>])', rendered)), {'move', 'speak'})
 
     def test_photography_guidance_is_derived_from_user_instruction(self):
         rendered = self.render_prompt()
 
-        self.assertIn("只根据用户当前的拍摄目标和指示", rendered)
-        self.assertIn("主画面是真人摄像头", rendered)
+        self.assertIn("按用户目标", rendered)
+        self.assertIn("主画面是真人", rendered)
         self.assertIn("右上角白底小窗", rendered)
         self.assertNotIn("下巴", rendered)
         self.assertNotIn("侧脸", rendered)
@@ -45,7 +50,8 @@ class StreamingCommandPromptTests(unittest.TestCase):
         rendered = self.render_prompt()
 
         self.assertIn("只能输出指令码", rendered)
-        self.assertIn("完整的 `>`", rendered)
+        self.assertIn("标签完整闭合后立即输出", rendered)
+        self.assertIn("单行连续输出", rendered)
         self.assertNotIn("JSON Lines", rendered)
         self.assertNotIn('{"type"', rendered)
         self.assertNotIn("{character_name}", rendered)

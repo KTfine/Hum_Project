@@ -297,6 +297,7 @@ class CoPhotoSession:
 
     def __init__(self) -> None:
         self._active = False
+        self._goal_requested = False
         self._lock = threading.Lock()
 
     @property
@@ -314,6 +315,13 @@ class CoPhotoSession:
     @property
     def allowed_actions(self) -> frozenset[str]:
         return frozenset({"move"}) if self.active else frozenset()
+
+    def claim_goal_question(self) -> bool:
+        with self._lock:
+            if not self._active or self._goal_requested:
+                return False
+            self._goal_requested = True
+            return True
 
 
 def alpha_composite_at(
@@ -580,7 +588,8 @@ class CanvasSource:
         )
 
     def render_scene(
-        self, camera_frame: np.ndarray | None, now: float | None = None
+        self, camera_frame: np.ndarray | None, now: float | None = None,
+        *, show_status: bool = True,
     ) -> np.ndarray:
         """Use the inset while inactive; blend the RGBA character into an active shot."""
         import cv2
@@ -600,7 +609,9 @@ class CanvasSource:
             alpha_composite_at(result, sprite, left, top)
         else:
             result = compose_model_frame(camera_frame, self.render_frame(now))
-        # The same client-owned state reaches both the preview and model input.
+        if not show_status:
+            return result
+        # This badge is for the user; model state comes from session instructions.
         label = "CO-PHOTO: ON" if active else "CO-PHOTO: OFF"
         font_scale = min(0.5, max(0.15, result.shape[1] / 640))
         font = cv2.FONT_HERSHEY_SIMPLEX
@@ -618,7 +629,7 @@ class CanvasSource:
     def latest_jpeg(self, camera_frame: np.ndarray | None = None) -> bytes:
         import cv2
 
-        frame = self.render_scene(camera_frame)
+        frame = self.render_scene(camera_frame, show_status=False)
         ok, encoded = cv2.imencode(
             ".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), self.jpeg_quality]
         )
@@ -846,6 +857,16 @@ async def send_realtime_inputs(
         await asyncio.sleep(delay)
 
 
+def request_co_photo_goal(
+    co_photo: CoPhotoSession, speech_queue: SpeechQueue,
+    event_log: FrontendEventLogger | None = None,
+) -> None:
+    if co_photo.claim_goal_question():
+        speech_queue.enqueue(CO_PHOTO_GOAL_QUESTION)
+        if event_log is not None:
+            event_log.record("co_photo.goal_requested", text=CO_PHOTO_GOAL_QUESTION)
+
+
 def dispatch_model_commands(
     commands: list[Command],
     canvas: CanvasSource,
@@ -855,6 +876,7 @@ def dispatch_model_commands(
     verbose: bool = False,
     allowed_actions: frozenset[str] | None = None,
     co_photo: CoPhotoSession | None = None,
+    defer_goal_question: bool = False,
 ) -> None:
     """Dispatch valid commands; invalid semantic commands are silently ignored."""
     for command in commands:
@@ -872,14 +894,14 @@ def dispatch_model_commands(
             )
             if activated:
                 if not was_active:
-                    speech_queue.enqueue(CO_PHOTO_GOAL_QUESTION)
+                    if not defer_goal_question:
+                        request_co_photo_goal(co_photo, speech_queue, event_log)
                     print("[co-photo] activated; move commands enabled", flush=True)
                     if event_log is not None:
                         event_log.record(
                             "co_photo.activated", source="model_request",
                             allowed_actions=sorted(co_photo.allowed_actions),
                         )
-                        event_log.record("co_photo.goal_requested", text=CO_PHOTO_GOAL_QUESTION)
             elif event_log is not None:
                 event_log.record(
                     "command.blocked", command=asdict(command),
@@ -934,6 +956,7 @@ async def receive_realtime_outputs(
     event_log: FrontendEventLogger | None = None,
     allowed_actions: frozenset[str] | None = None,
     co_photo: CoPhotoSession | None = None,
+    defer_goal_question: bool = False,
 ) -> None:
     """Dispatch tag commands and adapt untagged model text into speech."""
     parser = StreamingCommandParser(allow_plain_speech=True)
@@ -965,6 +988,7 @@ async def receive_realtime_outputs(
                 commands, canvas, speech_queue, event_log, verbose=verbose,
                 allowed_actions=allowed_actions,
                 co_photo=co_photo,
+                defer_goal_question=defer_goal_question,
             )
         elif kind in ("listen", "done"):
             parser.flush(response_id if kind == "done" else None)
@@ -998,13 +1022,19 @@ def make_tls_context(insecure: bool) -> ssl.SSLContext:
 def build_control_prompt(
     canvas: CanvasSource, args: argparse.Namespace, *, action_only: bool = False
 ) -> str:
-    from prompt import STREAMING_COMMAND_PROMPT, CO_PHOTO_ACTION_DIAGNOSTIC_PROMPT
+    from prompt import (
+        STREAMING_COMMAND_PROMPT, CO_PHOTO_COMMAND_PROMPT,
+        CO_PHOTO_ACTION_DIAGNOSTIC_PROMPT,
+    )
 
     if canvas.controller is None:
         raise RuntimeError("canvas has not been started")
     if action_only and not canvas.co_photo.active:
         raise ValueError("action-only diagnostics require an active co-photo session")
-    template = CO_PHOTO_ACTION_DIAGNOSTIC_PROMPT if action_only else STREAMING_COMMAND_PROMPT
+    template = (
+        CO_PHOTO_ACTION_DIAGNOSTIC_PROMPT if action_only else
+        CO_PHOTO_COMMAND_PROMPT if canvas.co_photo.active else STREAMING_COMMAND_PROMPT
+    )
     return template.format(
         character_name=args.character_name,
         character_persona=args.character_persona,
@@ -1014,9 +1044,106 @@ def build_control_prompt(
             {**asdict(canvas.controller.state_at()), "co_photo_active": canvas.co_photo.active},
             ensure_ascii=False,
         ),
-        recent_context="这是一次新会话，没有更早的上下文。",
+        recent_context=("客户端已确认合照开启，将询问本轮合照目标。"
+                        if canvas.co_photo.active else "新会话，尚未收到合照邀请。"),
         extra_instructions="用户通过麦克风与你说话；保持回复简短。",
     )
+
+
+async def wait_for_co_photo_activation(co_photo, stop_event) -> bool:
+    while not stop_event.is_set():
+        if co_photo.active:
+            return True
+        await asyncio.sleep(0.05)
+    return False
+
+
+async def close_model_session(websocket, reason, event_log=None) -> None:
+    """Release the old worker before opening the session with updated state."""
+    from websockets.exceptions import ConnectionClosed
+
+    message = {"type": "session.close", "reason": reason}
+    try:
+        await asyncio.wait_for(websocket.send(json.dumps(message)), timeout=2)
+        if event_log is not None:
+            event_log.record_message("gateway.send", message)
+        deadline = asyncio.get_running_loop().time() + 2
+        while True:
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                break
+            event = json.loads(await asyncio.wait_for(websocket.recv(), remaining))
+            if event_log is not None:
+                event_log.record_message("gateway.receive", event)
+            if event.get("type") == "session.closed":
+                break
+    except (OSError, ConnectionClosed, asyncio.TimeoutError):
+        pass
+    finally:
+        try:
+            await asyncio.wait_for(websocket.close(), timeout=2)
+        except (OSError, ConnectionClosed, asyncio.TimeoutError):
+            pass
+
+
+async def run_realtime_sessions(
+    connect, ws_url, ssl_context, canvas, camera, audio_buffer,
+    speech_queue, stop_event, args, *, event_log=None,
+) -> None:
+    """Refresh model instructions once when the client activates co-photo."""
+    while not stop_event.is_set():
+        active_at_open = canvas.co_photo.active
+        system_prompt = args.prompt or build_control_prompt(
+            canvas, args, action_only=args.action_only_test
+        )
+        websocket, created = await connect_and_open_session_with_retry(
+            connect, ws_url, ssl_context,
+            build_session_init(system_prompt, use_tts=False),
+            connect_timeout=args.connect_timeout,
+            session_timeout=args.session_timeout,
+            attempts=3, event_log=event_log,
+        )
+        tasks = []
+        switched = False
+        try:
+            if stop_event.is_set():
+                return
+            print(f"[session] created: {created.get('session_id', 'unknown')}", flush=True)
+            if active_at_open and not args.action_only_test:
+                request_co_photo_goal(canvas.co_photo, speech_queue, event_log)
+                dispatch_model_commands([], canvas, speech_queue, event_log, co_photo=canvas.co_photo)
+            refresh_on_entry = not active_at_open and not args.prompt and not args.action_only_test
+            sender = asyncio.create_task(send_realtime_inputs(
+                websocket, canvas, camera, audio_buffer, stop_event, event_log=event_log,
+            ), name="realtime-sender")
+            receiver = asyncio.create_task(receive_realtime_outputs(
+                websocket, stop_event, canvas, speech_queue, verbose=args.verbose,
+                event_log=event_log, co_photo=canvas.co_photo,
+                defer_goal_question=refresh_on_entry,
+            ), name="realtime-receiver")
+            tasks.extend([sender, receiver])
+            switch = None
+            if refresh_on_entry:
+                switch = asyncio.create_task(wait_for_co_photo_activation(canvas.co_photo, stop_event))
+                tasks.append(switch)
+            done, _pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            for task in done:
+                task.result()
+            switched = switch is not None and switch in done and switch.result() and not stop_event.is_set()
+        finally:
+            # Stop readers first: this intentional close must not set the
+            # application-wide stop flag or close the camera/microphone.
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            await close_model_session(
+                websocket, "co_photo_state_changed" if switched else "client_stop", event_log,
+            )
+        if not switched:
+            return
+        if event_log is not None:
+            event_log.record("session.prompt_refresh", co_photo_active=True)
+        print("[session] refreshing instructions for active co-photo", flush=True)
 
 
 async def run_probe(
@@ -1068,7 +1195,6 @@ async def run_probe(
         if camera is not None:
             camera.close()
         raise
-    system_prompt = args.prompt or build_control_prompt(canvas, args, action_only=args.action_only_test)
 
     if event_log is not None:
         event_log.record(
@@ -1095,69 +1221,10 @@ async def run_probe(
     print("[audio] MiniCPM-o TTS is disabled; model text is printed below", flush=True)
 
     try:
-        websocket, created = await connect_and_open_session_with_retry(
-            websockets.connect,
-            ws_url,
-            ssl_context,
-            build_session_init(system_prompt, use_tts=False),
-            connect_timeout=args.connect_timeout,
-            session_timeout=args.session_timeout,
-            attempts=3,
-            event_log=event_log,
+        await run_realtime_sessions(
+            websockets.connect, ws_url, ssl_context, canvas, camera,
+            audio_buffer, speech_queue, stop_event, args, event_log=event_log,
         )
-        sender = None
-        receiver = None
-        try:
-            print(f"[session] created: {created.get('session_id', 'unknown')}", flush=True)
-            sender = asyncio.create_task(
-                send_realtime_inputs(
-                    websocket,
-                    canvas,
-                    camera,
-                    audio_buffer,
-                    stop_event,
-                    event_log=event_log,
-                ),
-                name="realtime-sender",
-            )
-            receiver = asyncio.create_task(
-                receive_realtime_outputs(
-                    websocket,
-                    stop_event,
-                    canvas,
-                    speech_queue,
-                    verbose=args.verbose,
-                    event_log=event_log,
-                    co_photo=canvas.co_photo,
-                ),
-                name="realtime-receiver",
-            )
-            done, pending = await asyncio.wait(
-                {sender, receiver}, return_when=asyncio.FIRST_COMPLETED
-            )
-            for task in done:
-                task.result()
-            if not receiver.done():
-                close_message = {"type": "session.close", "reason": "user_stop"}
-                await websocket.send(json.dumps(close_message, ensure_ascii=False))
-                if event_log is not None:
-                    event_log.record_message("gateway.send", close_message)
-                try:
-                    await asyncio.wait_for(receiver, timeout=2.0)
-                except asyncio.TimeoutError:
-                    receiver.cancel()
-            for task in pending:
-                task.cancel()
-            await asyncio.gather(*pending, return_exceptions=True)
-        finally:
-            for task in (sender, receiver):
-                if task is not None and not task.done():
-                    task.cancel()
-            await asyncio.gather(
-                *(task for task in (sender, receiver) if task is not None),
-                return_exceptions=True,
-            )
-            await websocket.close()
     finally:
         stop_event.set()
         if microphone is not None:
