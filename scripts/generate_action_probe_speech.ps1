@@ -1,7 +1,7 @@
 param(
     [string]$Voice = 'Microsoft Kangkang',
     [string]$OutputSubdir = '',
-    [ValidateSet('baseline', 'generalization', 'all')][string]$Profile = 'all'
+    [ValidateSet('baseline', 'generalization', 'co-photo', 'all')][string]$Profile = 'all'
 )
 Add-Type -AssemblyName System.Speech
 $probeRoot = Join-Path (Split-Path $PSScriptRoot -Parent) 'runtime_results'
@@ -23,8 +23,16 @@ $generalization = [ordered]@{
     'do_nothing.wav' = '先不要移动，也不要换表情。'
 }
 $utterances = [ordered]@{}
-if ($Profile -ne 'generalization') { foreach ($item in $baseline.GetEnumerator()) { $utterances[$item.Key] = $item.Value } }
-if ($Profile -ne 'baseline') { foreach ($item in $generalization.GetEnumerator()) { $utterances[$item.Key] = $item.Value } }
+if ($Profile -in @('baseline', 'all')) { foreach ($item in $baseline.GetEnumerator()) { $utterances[$item.Key] = $item.Value } }
+if ($Profile -in @('generalization', 'all')) { foreach ($item in $generalization.GetEnumerator()) { $utterances[$item.Key] = $item.Value } }
+if ($Profile -eq 'co-photo') {
+    $utterances['photo_not_yet.wav'] = '先不要合照，你留在小窗里就好。'
+    $utterances['photo_enter.wav'] = '我们一起来拍照吧，请你进入画面和我合照。'
+    $utterances['photo_move_left.wav'] = '现在请把你自己向画面的左边移动一点。'
+    $utterances['photo_move_right.wav'] = '请你自己移动到画面右边四分之三的位置。'
+    $utterances['photo_reenter.wav'] = '我们继续一起合照吧。'
+    $utterances['photo_scale_denied.wav'] = '把你自己缩小一半。'
+}
 $synth = New-Object System.Speech.Synthesis.SpeechSynthesizer
 try {
     $synth.SelectVoice($Voice)

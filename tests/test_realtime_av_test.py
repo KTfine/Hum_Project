@@ -531,7 +531,8 @@ class RealtimeInputSenderTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all("video_frames" in item["input"] for item in websocket.sent))
         jpeg = base64.b64decode(websocket.sent[1]["input"]["video_frames"][0], validate=True)
         frame = cv2.imdecode(np.frombuffer(jpeg, dtype=np.uint8), cv2.IMREAD_COLOR)
-        self.assertLess(float(frame[:90, :160].mean()), 10.0)
+        # The client-owned status badge occupies the top-left rows.
+        self.assertLess(float(frame[30:90, :160].mean()), 10.0)
         self.assertGreater(float(frame[:60, 240:].mean()), 10.0)
 
 

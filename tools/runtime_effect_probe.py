@@ -32,6 +32,7 @@ async def run(args):
     stop = threading.Event()
     canvas = client.CanvasSource(SOURCE / 'tachie/sanae', 'normal', 1280, 720, 80, stop, preview=args.preview)
     camera = None if args.no_camera else client.CameraSource(0, stop)
+    canvas.set_camera(camera)
     logger = client.FrontendEventLogger(out / 'effect-probe.jsonl')
     canvas.start()
     cv2.imwrite(str(out / 'initial-avatar.png'), canvas.render_frame())
@@ -55,6 +56,7 @@ async def run(args):
         print('SESSION', created.get('session_id'), flush=True)
         receiver = asyncio.create_task(client.receive_realtime_outputs(
             websocket, stop, canvas, client.SpeechQueue(), verbose=True, event_log=logger,
+            co_photo=canvas.co_photo if getattr(args, 'co_photo', False) else None,
         ))
         timeline = np.zeros(args.seconds * 16000, dtype='<f4')
         instructions = [(3, 'move_left_smile.wav'), (25, 'return_center.wav')]
@@ -84,10 +86,13 @@ async def run(args):
             await websocket.send(json.dumps(message))
             logger.record_message('gateway.send', message)
             current = canvas.controller.state_at()
-            samples.append({'second': sequence, **asdict(current)})
-            if asdict(current) != last_snapshot_state:
+            samples.append({'second': sequence, 'co_photo_active': canvas.co_photo.active, **asdict(current)})
+            snapshot = {'co_photo_active': canvas.co_photo.active, **asdict(current)}
+            if snapshot != last_snapshot_state:
                 cv2.imwrite(str(out / f'state-{sequence:03d}.png'), canvas.render_frame())
-                last_snapshot_state = asdict(current)
+                if getattr(args, 'co_photo', False):
+                    cv2.imwrite(str(out / f'scene-{sequence:03d}.png'), canvas.render_scene(frame))
+                last_snapshot_state = snapshot
             shift = abs(current.x - 0.5)
             if shift > max_shift:
                 max_shift = shift
@@ -95,7 +100,10 @@ async def run(args):
             await asyncio.sleep(max(0, began + sequence + 1 - time.monotonic()))
         final = asdict(canvas.controller.state_at())
         cv2.imwrite(str(out / 'final-avatar.png'), canvas.render_frame())
-        (out / 'effect-state.json').write_text(json.dumps({'session_id': created.get('session_id'), 'max_horizontal_shift': max_shift, 'states': samples, 'final': final}, ensure_ascii=False, indent=2), encoding='utf-8')
+        if getattr(args, 'co_photo', False):
+            frame = camera.latest_frame() if camera is not None else None
+            cv2.imwrite(str(out / 'final-scene.png'), canvas.render_scene(frame))
+        (out / 'effect-state.json').write_text(json.dumps({'session_id': created.get('session_id'), 'max_horizontal_shift': max_shift, 'co_photo_active': canvas.co_photo.active, 'states': samples, 'final': final}, ensure_ascii=False, indent=2), encoding='utf-8')
         print('FINAL_STATE', json.dumps(final, ensure_ascii=False), flush=True)
         if receiver.done():
             receiver.result()
@@ -129,4 +137,5 @@ if __name__ == '__main__':
     parser.add_argument('--prompt-file')
     parser.add_argument('--instructions-file')
     parser.add_argument('--generation-config')
+    parser.add_argument('--co-photo', action='store_true', help='Test the normal invitation gate and move-only permissions')
     asyncio.run(run(parser.parse_args()))

@@ -24,6 +24,7 @@ from command_protocol import Command, StreamingCommandParser
 AUDIO_SAMPLE_RATE = 16_000
 AUDIO_SAMPLE_BYTES = 4
 AUDIO_CHUNK_BYTES = AUDIO_SAMPLE_RATE * AUDIO_SAMPLE_BYTES
+CO_PHOTO_GOAL_QUESTION = "你想一起拍什么样的照片？可以告诉我要求，也可以让我推荐一个。"
 
 
 class RealtimeServiceError(RuntimeError):
@@ -284,6 +285,30 @@ class SpeechQueue:
             return self._items.popleft() if self._items else None
 
 
+class CoPhotoSession:
+    """Client-owned, session-local activation and phase-one action permissions."""
+
+    def __init__(self) -> None:
+        self._active = False
+        self._lock = threading.Lock()
+
+    @property
+    def active(self) -> bool:
+        with self._lock:
+            return self._active
+
+    def enter(self) -> bool:
+        """Activate once; repeated invitations do not reset character geometry."""
+        with self._lock:
+            changed = not self._active
+            self._active = True
+            return changed
+
+    @property
+    def allowed_actions(self) -> frozenset[str]:
+        return frozenset({"move"}) if self.active else frozenset()
+
+
 def alpha_composite_at(
     canvas: np.ndarray, sprite: np.ndarray, left: int, top: int
 ) -> None:
@@ -416,9 +441,9 @@ class CameraSource:
 
 
 class CanvasSource:
-    """Render a controllable PNG sprite over a white canvas."""
+    """Render the character inset or a client-activated camera composite."""
 
-    WINDOW_TITLE = "MiniCPM-o sprite test - press Q to stop"
+    WINDOW_TITLE = "Photo assistant - press Q to stop"
 
     def __init__(
         self,
@@ -442,6 +467,23 @@ class CanvasSource:
         self.controller: SpriteController | None = None
         self._thread = None
         self.error: Exception | None = None
+        self.co_photo = CoPhotoSession()
+        self.camera: CameraSource | None = None
+
+    def set_camera(self, camera: CameraSource | None) -> None:
+        self.camera = camera
+
+    def activate_co_photo(self) -> bool:
+        if self.co_photo.active:
+            return True
+        if (
+            self.controller is None
+            or self.camera is None
+            or self.camera.latest_frame() is None
+        ):
+            return False
+        self.co_photo.enter()
+        return True
 
     @property
     def sprite_ids(self) -> list[str]:
@@ -495,15 +537,20 @@ class CanvasSource:
         return canvas
 
     def _transform_sprite(
-        self, sprite: np.ndarray, state: SpriteState
+        self,
+        sprite: np.ndarray,
+        state: SpriteState,
+        *,
+        width: int | None = None,
+        height: int | None = None,
     ) -> np.ndarray:
         import cv2
 
         sprite_h, sprite_w = sprite.shape[:2]
         fit_scale = min(
             1.0,
-            (self.width * 0.9) / sprite_w,
-            (self.height * 0.9) / sprite_h,
+            ((self.width if width is None else width) * 0.9) / sprite_w,
+            ((self.height if height is None else height) * 0.9) / sprite_h,
         )
         scale = fit_scale * state.scale
         radians = math.radians(state.rotation)
@@ -525,10 +572,46 @@ class CanvasSource:
             borderValue=(0, 0, 0, 0),
         )
 
+    def render_scene(
+        self, camera_frame: np.ndarray | None, now: float | None = None
+    ) -> np.ndarray:
+        """Use the inset while inactive; blend the RGBA character into an active shot."""
+        import cv2
+
+        if self.controller is None:
+            raise RuntimeError("canvas has not been started")
+        active = self.co_photo.active
+        if active and camera_frame is not None:
+            result = camera_frame.copy()
+            height, width = result.shape[:2]
+            state = self.controller.state_at(now)
+            sprite = self._transform_sprite(
+                self.sprites[state.sprite_id], state, width=width, height=height
+            )
+            left = int(round(state.x * width)) - sprite.shape[1] // 2
+            top = int(round(state.y * height)) - sprite.shape[0]
+            alpha_composite_at(result, sprite, left, top)
+        else:
+            result = compose_model_frame(camera_frame, self.render_frame(now))
+        # The same client-owned state reaches both the preview and model input.
+        label = "CO-PHOTO: ON" if active else "CO-PHOTO: OFF"
+        font_scale = min(0.5, max(0.15, result.shape[1] / 640))
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        (text_width, text_height), baseline = cv2.getTextSize(label, font, font_scale, 1)
+        cv2.rectangle(
+            result, (0, 0), (text_width + 10, text_height + baseline + 10),
+            (255, 255, 255), -1,
+        )
+        cv2.putText(
+            result, label, (5, text_height + 5), font, font_scale,
+            (0, 0, 0), 1, cv2.LINE_AA,
+        )
+        return result
+
     def latest_jpeg(self, camera_frame: np.ndarray | None = None) -> bytes:
         import cv2
 
-        frame = compose_model_frame(camera_frame, self.render_frame())
+        frame = self.render_scene(camera_frame)
         ok, encoded = cv2.imencode(
             ".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), self.jpeg_quality]
         )
@@ -541,7 +624,8 @@ class CanvasSource:
 
         try:
             while not self.stop_event.is_set():
-                cv2.imshow(self.WINDOW_TITLE, self.render_frame())
+                frame = self.camera.latest_frame() if self.camera is not None else None
+                cv2.imshow(self.WINDOW_TITLE, self.render_scene(frame))
                 if cv2.waitKey(16) & 0xFF in (ord("q"), ord("Q")):
                     self.stop_event.set()
                     break
@@ -763,6 +847,7 @@ def dispatch_model_commands(
     *,
     verbose: bool = False,
     allowed_actions: frozenset[str] | None = None,
+    co_photo: CoPhotoSession | None = None,
 ) -> None:
     """Dispatch valid commands; invalid semantic commands are silently ignored."""
     for command in commands:
@@ -771,8 +856,34 @@ def dispatch_model_commands(
         elif command.kind == "blank":
             if verbose:
                 print("[blank]", flush=True)
+        elif command.kind == "photo":
+            was_active = co_photo.active if co_photo is not None else False
+            activated = (
+                co_photo is not None
+                and command.params.get("action") == "enter"
+                and canvas.activate_co_photo()
+            )
+            if activated:
+                if not was_active:
+                    speech_queue.enqueue(CO_PHOTO_GOAL_QUESTION)
+                    print("[co-photo] activated; move commands enabled", flush=True)
+                    if event_log is not None:
+                        event_log.record(
+                            "co_photo.activated", source="model_request",
+                            allowed_actions=sorted(co_photo.allowed_actions),
+                        )
+                        event_log.record("co_photo.goal_requested", text=CO_PHOTO_GOAL_QUESTION)
+            elif event_log is not None:
+                event_log.record(
+                    "command.blocked", command=asdict(command),
+                    reason=("co_photo_camera_unavailable" if co_photo is not None
+                            else "co_photo_not_managed"),
+                )
         else:
-            if allowed_actions is not None and command.kind not in allowed_actions:
+            if (
+                (allowed_actions is not None and command.kind not in allowed_actions)
+                or (co_photo is not None and command.kind not in co_photo.allowed_actions)
+            ):
                 if event_log is not None:
                     event_log.record("command.blocked", command=asdict(command), reason="action_not_enabled")
                 continue
@@ -815,6 +926,7 @@ async def receive_realtime_outputs(
     verbose: bool,
     event_log: FrontendEventLogger | None = None,
     allowed_actions: frozenset[str] | None = None,
+    co_photo: CoPhotoSession | None = None,
 ) -> None:
     """Dispatch tag commands and adapt untagged model text into speech."""
     parser = StreamingCommandParser(allow_plain_speech=True)
@@ -845,6 +957,7 @@ async def receive_realtime_outputs(
             dispatch_model_commands(
                 commands, canvas, speech_queue, event_log, verbose=verbose,
                 allowed_actions=allowed_actions,
+                co_photo=co_photo,
             )
         elif kind in ("listen", "done"):
             parser.flush(response_id if kind == "done" else None)
@@ -886,7 +999,8 @@ def build_control_prompt(canvas: CanvasSource, args: argparse.Namespace) -> str:
         response_language="中文",
         sprite_catalog=", ".join(canvas.sprite_ids),
         current_character_state=json.dumps(
-            asdict(canvas.controller.state_at()), ensure_ascii=False
+            {**asdict(canvas.controller.state_at()), "co_photo_active": canvas.co_photo.active},
+            ensure_ascii=False,
         ),
         recent_context="这是一次新会话，没有更早的上下文。",
         extra_instructions="用户通过麦克风与你说话；保持回复简短。",
@@ -915,6 +1029,7 @@ async def run_probe(
         preview=not args.no_preview,
     )
     camera = None if args.no_camera else CameraSource(args.camera_device, stop_event)
+    canvas.set_camera(camera)
     microphone = None if args.no_mic else MicrophoneSource(audio_buffer, args.input_device)
     speech_queue = SpeechQueue()
     ws_url = normalize_video_ws_url(args.url)
@@ -993,9 +1108,7 @@ async def run_probe(
                     speech_queue,
                     verbose=args.verbose,
                     event_log=event_log,
-                    # Co-photo activation is not implemented yet. The normal
-                    # client therefore permits speech, but no avatar actions.
-                    allowed_actions=frozenset(),
+                    co_photo=canvas.co_photo,
                 ),
                 name="realtime-receiver",
             )
