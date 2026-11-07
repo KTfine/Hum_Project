@@ -1,5 +1,7 @@
 # Streaming Command Protocol Design
 
+> 历史档案（2026-10-22），不作为当前实现或 AI 执行要求。普通文字适配、模式重建及指导画面后来均有变化；当前行为见 [模式与提示词](../modes-and-prompts.md)。
+
 ## Goal
 
 Replace streamed JSONL model output with a compact tag protocol so commands can be dispatched as soon as their closing delimiter arrives. Keep one continuous MiniCPM-o video WebSocket session and send one second of fresh microphone audio plus one current composite video frame per input tick. Add camera observation so the model can give photography guidance only according to the user's instructions, without hard-coded posing or aesthetic rules.

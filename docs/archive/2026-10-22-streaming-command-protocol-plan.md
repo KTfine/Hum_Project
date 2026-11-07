@@ -1,6 +1,6 @@
 # Streaming Command Protocol Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> 历史档案（2026-10-22），不作为当前实现或 AI 执行要求。普通文字适配、模式重建及指导画面后来均有变化；当前行为见 [模式与提示词](../modes-and-prompts.md)。
 
 **Goal:** Replace JSONL controls with a forgiving streamed tag protocol and send webcam imagery with a character-state inset once per second.
 
@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3, asyncio, OpenCV, NumPy, unittest, websockets, sounddevice
 
-**Spec:** `docs/superpowers/specs/2026-10-22-streaming-command-protocol-design.md`
+**Spec:** `2026-10-22-streaming-command-protocol-design.md`
 
 ## Global Constraints
 

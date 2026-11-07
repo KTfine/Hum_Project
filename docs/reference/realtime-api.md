@@ -1,106 +1,39 @@
-# MiniCPM-o 4.5 服务调用手册
+# Realtime API 参考
 
-本文说明如何从个人电脑调用本目录部署的 MiniCPM-o 4.5 服务，包括连接方式、
-输入输出格式、会话行为和可直接使用的客户端。部署、下载模型和提交 Slurm 作业请
-参阅 [README.md](README.md)。
+本项目使用固定版本 MiniCPM-o Demo 的 WebSocket API，不是 OpenAI 兼容的 REST 接口。协议来自上游手册；当前客户端行为见 [模式与提示词](../modes-and-prompts.md)，部署见 [单 GPU 部署](../cloud-deployment.md)，来源见 [固定版本](upstream-sources.md)。
 
 ## 1. 接口概览
 
-对外只使用计算节点 Gateway 的 `8006` 端口。该端口只监听计算节点的
-`127.0.0.1`，必须通过 SSH 隧道访问。
+本项目的单 GPU 启动脚本让 Gateway 监听 127.0.0.1:8006；本机通过 SSH 转发到 18006。内部端口 8007、22400、22500 不需要转发。服务依赖 SSH 身份认证，不提供 API Key 校验。
 
-| 用途 | 方法 | 本机隧道后的地址 |
-|---|---|---|
-| 健康检查 | HTTPS GET | `https://localhost:8006/health` |
-| 服务与队列状态 | HTTPS GET | `https://localhost:8006/status` |
-| 文字/单轮多模态 | WebSocket | `wss://localhost:8006/v1/realtime?mode=chat` |
-| 音频全双工 | WebSocket | `wss://localhost:8006/v1/realtime?mode=audio` |
-| 音视频全双工 | WebSocket | `wss://localhost:8006/v1/realtime?mode=video` |
-| 官方音频页面 | 浏览器 | `https://localhost:8006/audio_duplex` |
-| 官方音视频页面 | 浏览器 | `https://localhost:8006/omni` |
+旧 Slurm 启动脚本让 8006 监听 0.0.0.0、内部端口监听 localhost，依赖集群网络隔离；见 [Slurm 说明](../../backend/README.md)。下文统一使用本机 SSH 隧道地址，不改变任何启动脚本。
 
-这不是 OpenAI 兼容的 `/v1/chat/completions` REST API。三种推理模式都使用
-JSON 文本帧形式的 Realtime WebSocket 协议。音频和图像也放在 JSON 中，以
-Base64 字符串传输；不要发送 WebSocket 二进制帧。
+| 用途 | 地址 |
+|---|---|
+| 健康检查 | https://localhost:18006/health |
+| Worker 与队列状态 | https://localhost:18006/status |
+| 文字/单轮多模态 | wss://localhost:18006/v1/realtime?mode=chat |
+| 音频全双工 | wss://localhost:18006/v1/realtime?mode=audio |
+| 音视频全双工 | wss://localhost:18006/v1/realtime?mode=video |
 
-当前服务没有 API Key 验证。安全边界是计算节点的 localhost 监听和 SSH
-身份认证，因此不要把 `8006` 直接监听或转发到公网地址。
+输入输出均为 JSON 文本帧，媒体按协议编码到载荷中，不发送 WebSocket 二进制帧。下文的样例响应和时间戳用于说明字段，不是本版本验收结果。
 
-## 2. 每次调用前建立连接
+## 2. 建立连接
 
-### 2.1 启动作业并等待就绪
-
-在集群登录节点执行：
-
-```bash
-cd /hpc2hdd/home/yliu674/aiaa3800/MiniCPM-o-4.5-service
-job_id=$(sbatch --parsable slurm/serve.sbatch)
-echo "$job_id"
-squeue -j "$job_id" -o '%.18i %.20P %.8T %.20R'
-tail -f "logs/slurm/minicpmo45-serve_${job_id}.out"
-```
-
-等到输出出现 `service ready`。再取得计算节点名：
-
-```bash
-compute_host=$(squeue -j "$job_id" -h -o '%N')
-echo "$compute_host"
-```
-
-作业排队时没有计算节点，也无法建立可用的隧道。默认服务时限为 30 分钟；作业
-结束后所有现有连接会断开，下一次作业可能分配到不同节点。
-
-### 2.2 从个人电脑建立 SSH 隧道
-
-Windows PowerShell 示例，其中 `COMPUTE_HOST` 替换为实际节点名：
+在仓库根目录的 PowerShell 中执行，账号和端口替换为自己的配置：
 
 ```powershell
-ssh -N -J yliu674@hpc2login.hpc.hkust-gz.edu.cn `
-  -L 8006:127.0.0.1:8006 yliu674@COMPUTE_HOST
+.\scripts\connect_tunnel.ps1 -SshHost YOUR_SSH_HOST -SshPort 22 -SshUser YOUR_SSH_USER
 ```
 
-这个 PowerShell 窗口必须保持打开。若电脑上的 `8006` 已被占用，可以改用：
+保持该窗口打开，在另一个窗口检查：
 
 ```powershell
-ssh -N -J yliu674@hpc2login.hpc.hkust-gz.edu.cn `
-  -L 18006:127.0.0.1:8006 yliu674@COMPUTE_HOST
+curl.exe -k https://localhost:18006/health
+curl.exe -k https://localhost:18006/status
 ```
 
-随后所有示例中的本机端口也改成 `18006`。不要转发内部端口 `8007`、`22400`
-或 `22500`。
-
-### 2.3 自签名证书
-
-服务使用自签名 TLS 证书。第一次使用浏览器时先打开
-<https://localhost:8006> 并接受证书警告，否则页面内的 WSS 连接可能失败。
-
-命令行客户端可以在可信的本地隧道场景使用 `--insecure`。自己编写客户端时，
-开发阶段可以关闭此连接的证书校验，但不要把关闭校验作为通用互联网客户端的
-默认行为。
-
-### 2.4 健康检查
-
-最简单的调用：
-
-```powershell
-curl.exe -k https://localhost:8006/health
-```
-
-正常响应：
-
-```json
-{
-  "status": "healthy",
-  "timestamp": "2026-10-15T22:07:57.000000"
-}
-```
-
-`/health` 只证明 Gateway 可响应。`/status` 还能查看 Worker 数量、忙闲状态和
-队列长度。项目客户端会检查 `/health`：
-
-```powershell
-py health.py --insecure --pretty
-```
+health 只证明网关可响应；status 用于确认 Worker 注册、忙闲和排队状态。自签名证书场景的 -k 或 --insecure 仅用于这个可信本地隧道。一般客户端启动步骤见 [README](../../README.md)。
 
 ## 3. 所有模式共有的会话生命周期
 
@@ -207,12 +140,12 @@ WebSocket 意外断开。
 
 ### 4.1 最简单的现成调用
 
-把项目的 `client/` 目录复制到个人电脑后安装依赖：
+以下通用探针位于 `backend/client/`，命令从该目录运行。这些探针不会自动加载拍照助手的 prompt；提示词实验应使用原样组装的 system 文本。
 
 ```powershell
-cd minicpm-client
+cd backend/client
 py -m pip install -r requirements.txt
-py text_chat.py --insecure --pretty --prompt "请只回复：连接成功"
+py text_chat.py --url https://localhost:18006 --insecure --pretty --prompt "请只回复：连接成功"
 ```
 
 也可以指定另一个本地端口或完整 WSS 地址：
@@ -228,7 +161,7 @@ py text_chat.py --url https://localhost:18006 --insecure --pretty `
 {
   "type": "text_chat_validation",
   "ok": true,
-  "url": "wss://localhost:8006/v1/realtime?mode=chat",
+  "url": "wss://localhost:18006/v1/realtime?mode=chat",
   "session_id": "sess_...",
   "text": "连接成功",
   "client_total_ms": 4433.626,
@@ -353,17 +286,17 @@ py text_chat.py --url https://localhost:18006 --insecure --pretty `
 需要实时麦克风交互时，直接使用官方页面最稳妥：
 
 ```text
-https://localhost:8006/audio_duplex
+https://localhost:18006/audio_duplex
 ```
 
 浏览器会完成采样、分块、实时节拍、播放缓冲和回声抑制。建议戴耳机，避免模型
 播出的声音重新进入麦克风并触发错误打断。
 
-文件输入或自动化基准可使用固定上游中的官方脚本：
+文件输入或自动化基准可使用固定上游中的官方脚本（从仓库根目录运行，需先按部署说明下载 upstream）：
 
 ```powershell
 py upstream/examples/realtime/audio_probe.py `
-  --url https://localhost:8006 `
+  --url https://localhost:18006 `
   --input-wav C:\path\to\input.wav `
   --insecure --pretty-json
 ```
@@ -500,14 +433,14 @@ turn，但 WebSocket 会话仍然继续。全双工模式主要靠连续 delta �
 摄像头和麦克风实时交互使用官方页面：
 
 ```text
-https://localhost:8006/omni
+https://localhost:18006/omni
 ```
 
-文件输入基准使用官方脚本（个人电脑需安装 FFmpeg）：
+文件输入基准使用官方脚本（从仓库根目录运行，需已下载 upstream，个人电脑需安装 FFmpeg）：
 
 ```powershell
 py upstream/examples/realtime/video_probe.py `
-  --url https://localhost:8006 `
+  --url https://localhost:18006 `
   --video C:\path\to\input.mp4 `
   --insecure --pretty-json
 ```
@@ -563,7 +496,7 @@ py upstream/examples/realtime/video_probe.py `
 ## 7. 最小 WebSocket 客户端框架
 
 下面的 Python 示例展示文字协议的完整控制流。项目已有的
-`client/text_chat.py` 功能更完整，实际使用优先调用它。
+`backend/client/text_chat.py` 功能更完整，实际使用优先调用它。
 
 ```python
 import asyncio
@@ -571,7 +504,7 @@ import json
 import ssl
 import websockets
 
-URL = "wss://localhost:8006/v1/realtime?mode=chat"
+URL = "wss://localhost:18006/v1/realtime?mode=chat"
 
 async def main():
     tls = ssl._create_unverified_context()  # 仅用于本机 SSH 隧道和自签名证书
@@ -647,26 +580,8 @@ asyncio.run(main())
 8. 模型听不懂或无响应：确认输入是 16 kHz Float32 单声道，并以实时节拍发送，
    文件末尾附加少量静音。
 
-## 10. 已验证范围
+## 10. 验证记录与源码
 
-当前部署作业 `13091474` 已实际验证：
+当前实测结果统一记录在 [验证目录](../validation/README.md)，不把上游的历史作业编号、延迟或硬件数据视为本项目的新结果。最近一次 [纯文本实验](../validation/2026-11-07-text-mode-switch.md) 验证了模式标签生成，没有执行真人音视频会话切换。
 
-- Gateway、Worker、模型 Backend 正常启动；
-- BF16、无量化；
-- 文字 Realtime 请求成功并返回 `MiniCPM service OK`；
-- 文字首次增量约 `4280 ms`，完整请求约 `4434 ms`；
-- 服务稳定空跑约 29 分钟，显存约 `21.2 GiB`。
-
-音频与音视频模块已经成功加载，本文中的协议字段来自当前固定版本的官方 Demo
-代码和官方探针脚本；麦克风全双工和摄像头全双工尚未在个人电脑端完成实际验收。
-
-## 11. 对照源码
-
-当上游版本变化时，以本部署固定版本中的以下文件为准：
-
-- `client/text_chat.py`：最小文字客户端；
-- `client/health.py`：健康检查客户端；
-- `upstream/static/duplex/lib/realtime-session.js`：官方浏览器协议实现；
-- `upstream/examples/realtime/audio_probe.py`：官方音频探针；
-- `upstream/examples/realtime/video_probe.py`：官方视频探针；
-- `upstream/py_backend/server.py`：输入解析和输出事件生成。
+通用探针位于 backend/client/；外部 Demo 位于安装器创建的 upstream/，版本由 backend/config/versions.env 固定。当前补丁位于 backend/patches/，安装时统一应用。

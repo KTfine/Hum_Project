@@ -4,9 +4,10 @@
 
 本目录部署官方 BF16 `openbmb/MiniCPM-o-4_5` 和官方
 `OpenBMB/MiniCPM-o-Demo`。它提供文字、音频全双工和音视频全双工
-Realtime WebSocket API。Gateway 的 `8006` 端口监听计算节点所有 IPv4
-接口，因此可从计算节点内网访问；内部端口 `8007`、`22400`、`22500` 仍然
-只监听 `127.0.0.1`。服务没有 API Key，禁止把 `8006` 暴露到公网。
+Realtime WebSocket API。本目录的 Slurm 启动脚本让 Gateway 的 `8006` 监听 `0.0.0.0`，供集群内网访问；
+内部端口 `8007`、`22400`、`22500` 只监听 `127.0.0.1`。根目录
+`scripts/cloud_serve.sh` 的单 GPU 部署则让所有端口都监听 `127.0.0.1`。
+这两种启动方式不同，不能混用监听说明。服务没有 API Key，不向公网开放端口。
 
 所有 `sbatch` 命令都由你手动执行。不要在登录节点直接运行
 `bootstrap_cpu.sh`、`download_model.sh`、`probe_gpu.sh` 或
@@ -159,7 +160,7 @@ HTTPS/WSS 才能正常连接。只转发 8006；内部注册端口 8007、Worker
 ## 7. 在电脑上调用 API
 
 完整的输入输出格式、Realtime 事件、全双工行为和客户端实现说明见
-[CALLING_API.md](CALLING_API.md)。下面仅保留最短调用路径。
+[Realtime API 参考](../docs/reference/realtime-api.md)。下面仅保留最短调用路径。
 
 复制轻量客户端到 Windows（在 PowerShell 中执行）：
 
