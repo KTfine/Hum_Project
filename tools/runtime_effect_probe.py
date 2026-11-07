@@ -68,11 +68,7 @@ async def run(args):
             mode_selection=None if args.prompt_file else selection,
         ))
         timeline = np.zeros(args.seconds * 16000, dtype='<f4')
-        instructions = [(3, 'move_left_smile.wav'), (25, 'return_center.wav')]
-        if args.instructions_file:
-            instructions = json.loads(Path(args.instructions_file).read_text(encoding='utf-8'))
-        if args.visual_check:
-            instructions.append((40, 'visual_color_check.wav'))
+        instructions = json.loads(Path(args.instructions_file).read_text(encoding='utf-8'))
         for start_second, file_name in instructions:
             spoken = wav_samples(ROOT / 'runtime_results' / file_name)
             offset = start_second * 16000
@@ -110,9 +106,6 @@ async def run(args):
                     event_log=logger, mode_selection=None if args.prompt_file else selection,
                 ))
             frame = camera.latest_frame() if camera is not None else None
-            if args.visual_check and sequence >= 40 and frame is not None:
-                frame = frame.copy()
-                cv2.rectangle(frame, (20, 20), (150, 150), (0, 0, 255), thickness=-1)
             jpeg = canvas.latest_jpeg(frame, include_character=include_character)
             audio = timeline[sequence * 16000:(sequence + 1) * 16000].tobytes()
             message = client.build_video_input(sequence + 1, audio, jpeg)
@@ -160,10 +153,10 @@ if __name__ == '__main__':
     parser.add_argument('--seconds', type=int, default=50)
     parser.add_argument('--no-camera', action='store_true')
     parser.add_argument('--preview', action='store_true')
-    parser.add_argument('--visual-check', action='store_true')
     parser.add_argument('--output-subdir', default='')
     parser.add_argument('--prompt-file')
-    parser.add_argument('--instructions-file')
+    parser.add_argument('--instructions-file', required=True,
+                        help='JSON timeline of [start_second, WAV path relative to runtime_results]')
     parser.add_argument('--generation-config')
     args = parser.parse_args()
     asyncio.run(run(args))

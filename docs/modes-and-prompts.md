@@ -1,6 +1,6 @@
 # 模式、提示词与执行流程
 
-当前实现对应 2026-11-07 的双模式基线。模式决定加载哪份提示词和显示哪种画面；它不限制合法角色动作的执行。
+当前实现对应 2026-11-07 的双模式基线 `684d582`。此前方案不定义当前行为。模式决定加载哪份提示词和显示哪种画面；它不限制合法角色动作的执行。
 
 ## 提示词如何组装
 
@@ -49,6 +49,6 @@ ON/OFF 只表示最后成功加载的提示词：OFF = guidance，ON = co-photo�
 
 `--prompt` 或重放工具的 `--prompt-file` 完整覆盖内置提示词，记录为 custom，不自动替换模板，保留原立绘预览和带立绘小窗的模型输入。旧 photo:enter 只保留解析兼容，不再触发入画或切换；旧 action-only 和手动模式启动选项已移除。
 
-`tools/runtime_effect_probe.py` 使用相同模式逻辑，可重放合成语音并记录角色状态；它不是新的提示词模式，也不代表真人实验。使用前查看其 `--help`，历史报告里的旧参数仅用于解释当时的实验。
+`tools/runtime_effect_probe.py` 使用相同模式逻辑，可重放录音并记录角色状态；它不是新的提示词模式，也不代表真人实验。必须显式提供本轮时间线，不再附带旧动作默认用例。参数见 [客户端 CLI](reference/client-cli.md)，字段见 [标签协议](reference/command-protocol.md) 和 [Realtime API](reference/realtime-api.md)。
 
 当前模型效果及限制见 [验证索引](validation/README.md)。

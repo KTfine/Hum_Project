@@ -9,4 +9,6 @@
 | 运行时外部 Demo，不纳入本仓库源码树 | [OpenBMB/MiniCPM-o-Demo](https://github.com/OpenBMB/MiniCPM-o-Demo/tree/47709a9210dfd71afa76c058e017fc8c4db5c8d2)，`47709a9210dfd71afa76c058e017fc8c4db5c8d2` |
 | 外部模型权重，不上传 GitHub | [openbmb/MiniCPM-o-4_5](https://huggingface.co/openbmb/MiniCPM-o-4_5/tree/503e754207c94da6bb26850b4469f367c9ea3582)，revision `503e754207c94da6bb26850b4469f367c9ea3582` |
 
-导入时排除了上游 `logs/*.jsonl` 历史会话记录，增加了忽略规则和维护约定；运行源码与立绘内容保持基线版本。立绘沿用上游素材，原始归属不变；本仓库没有为第三方素材新增授权或统一开源许可证。
+上述是来源定位，不代表当前源码仍与导入版本逐字一致。2026-11-07 起的运行与实验基线见 [模式说明](../modes-and-prompts.md) 和 [实验索引](../validation/README.md)；重置实验不改变第三方归属或固定运行依赖。
+
+导入时排除了上游历史会话。立绘沿用上游素材，原始归属不变；本仓库没有为第三方素材新增授权或统一开源许可证。

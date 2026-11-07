@@ -1171,7 +1171,7 @@ async def run_probe(
 def parse_args(argv=None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Send microphone audio plus webcam video with a character inset to "
+            "Send microphone audio plus webcam video (character inset in co-photo/custom) to "
             "MiniCPM-o, then apply streamed tag commands."
         )
     )
@@ -1203,7 +1203,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument(
         "--no-camera",
         action="store_true",
-        help="send only the white character canvas",
+        help="send a blank frame in guidance, or the character canvas in co-photo/custom",
     )
     parser.add_argument("--no-preview", action="store_true", help="hide canvas preview")
     parser.add_argument(

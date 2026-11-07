@@ -2,6 +2,8 @@
 
 基于 MiniCPM-o 4.5 的实时拍照指导与二次元伙伴互动原型，沿用 [AIAA3800](https://github.com/DDRP674/AIAA3800/tree/177d70afd6d8e6d95d619621c61117cef8cd59cd) 的客户端与立绘素材。
 
+**维护起点：2026-11-07（Asia/Shanghai）**。此前实验、协议和待办已退出当前依据；当天起的记录绑定具体版本。旧内容仅保留在 Git 历史，来源与固定依赖继续维护。
+
 启动后默认进行**真人拍照指导**，画面只显示摄像头。用户请求合照时，由模型输出模式标签，客户端重建推理会话并加载**合照互动**提示词。合照模式显示白底立绘窗口，模型看到摄像头及右上角立绘小窗。
 
 目前处于提示词实验阶段，尚未形成稳定的真人拍照闭环。合照模式也不代表已经把角色合成进照片或完成拍摄；说话内容暂时打印到控制台，未启用语音播报。
@@ -31,7 +33,7 @@ curl.exe -k https://localhost:18006/status
 
 客户端会使用摄像头和麦克风。可以先说“帮我看看站姿”，再试“切换到合照模式”或“恢复指导模式”。这些话由模型理解，客户端没有关键词开关。窗口按 **Q** 或终端按 **Ctrl+C** 退出，一次运行一个客户端。部署新服务见 [单 GPU 部署](docs/cloud-deployment.md)。
 
-## 最新实验
+## 当前基线证据
 
 2026-11-07 保持提示词不变，完成 **32 种表达、98 次纯文本调用**，没有启用摄像头或麦克风：
 
@@ -39,7 +41,7 @@ curl.exe -k https://localhost:18006/status
 - “切换到合照模式”3/3、“恢复指导模式”4/4；“和我合照”2/4、“退出合照”0/3。
 - 主要问题是模型口头答应切换，却没有输出可执行标签。少量重复不能证明稳定性，纯文本结果也不等于实时音视频通过。
 
-逐句结果、条件和限制见 [实验记录](docs/validation/2026-11-07-text-mode-switch.md)。客户端已有 73 项本地回归通过，覆盖模拟会话、画面选择和流式执行；这些检查与真实模型效果分别记录。
+逐句结果、条件和限制见 [实验记录](docs/validation/2026-11-07-text-mode-switch.md)，对应 prompt / 画面实现 `684d582`。73 项程序回归覆盖模拟会话、画面选择和流式执行；与真实模型效果分别记录。新实验及本轮维护核对统一收录在 [实验索引](docs/validation/README.md)。
 
 ## 项目结构
 
@@ -50,10 +52,10 @@ curl.exe -k https://localhost:18006/status
 | `command_protocol.py` | 标签解析、校验与角色动作调度 |
 | `tachie/` | 上游立绘素材 |
 | `scripts/`、`backend/` | 启动、部署、固定版本和后端补丁 |
-| `tests/`、`tools/` | 回归检查与实验辅助工具 |
-| `docs/` | 使用说明、验证记录、维护约定和历史设计 |
+| `tests/`、`tools/` | 回归检查与显式时间线重放工具 |
+| `docs/` | 当前说明、当天起的实验、维护协议和接口参考 |
 
-[文档导航](docs/README.md) · [模式与提示词](docs/modes-and-prompts.md) · [实验索引](docs/validation/README.md) · [来源与版本](docs/reference/upstream-sources.md) · [变更记录](CHANGELOG.md)
+[文档导航](docs/README.md) · [模式与提示词](docs/modes-and-prompts.md) · [接口索引](docs/reference/README.md) · [维护协议](docs/maintenance/README.md) · [来源与版本](docs/reference/upstream-sources.md) · [变更记录](CHANGELOG.md)
 
 本地回归命令：
 

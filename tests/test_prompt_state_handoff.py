@@ -204,7 +204,7 @@ class PromptHandoffTests(unittest.IsolatedAsyncioTestCase):
         camera = MagicMock()
         camera.latest_frame.return_value = np.zeros((100, 200, 3), dtype=np.uint8)
         args = SimpleNamespace(output_subdir='replay', preview=False, no_camera=False, prompt_file=None,
-            generation_config=None, instructions_file=str(schedule), visual_check=False,
+            generation_config=None, instructions_file=str(schedule),
             url='https://unused', seconds=3)
         with patch.object(probe, 'ROOT', root), patch.object(client, 'CanvasSource', return_value=self.canvas), \
              patch.object(client, 'CameraSource', return_value=camera), \
