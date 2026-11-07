@@ -132,7 +132,7 @@ class ReceiverAdaptationTests(unittest.TestCase):
                          ['请向你自己的', '左边挪。', '保持。'])
         self.assertEqual(canvas.commands, [])
 
-    def test_inactive_actions_are_blocked_while_speech_still_dispatches(self):
+    def test_actions_and_speech_dispatch_without_a_permission_filter(self):
         log = EventLog()
         canvas = RecordingCanvas()
         socket = Socket([
@@ -142,9 +142,9 @@ class ReceiverAdaptationTests(unittest.TestCase):
         ])
         with contextlib.redirect_stdout(io.StringIO()):
             asyncio.run(client.receive_realtime_outputs(socket, threading.Event(), canvas,
-                        client.SpeechQueue(), verbose=False, event_log=log, allowed_actions=frozenset()))
-        self.assertEqual(canvas.commands, [])
-        self.assertEqual(len([r for r in log.rows if r['event'] == 'command.blocked']), 2)
+                        client.SpeechQueue(), verbose=False, event_log=log))
+        self.assertEqual([c.kind for c in canvas.commands], ['move', 'tachie'])
+        self.assertEqual(len([r for r in log.rows if r['event'] == 'command.blocked']), 0)
         self.assertEqual([r['text'] for r in log.rows if r['event'] == 'speak'], ['保持。'])
 
 

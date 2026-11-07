@@ -9,7 +9,7 @@ from typing import Any
 
 
 DEFAULT_TRANSITION_MS = 350
-_PREFIX_RE = re.compile(r"<(speak|move|scale|tachie|rotate|photo):|<blank")
+_PREFIX_RE = re.compile(r"<(speak|move|scale|tachie|rotate|photo|mode):|<blank")
 _STARTERS = (
     "<speak:",
     "<move:",
@@ -17,6 +17,7 @@ _STARTERS = (
     "<tachie:",
     "<rotate:",
     "<photo:",
+    "<mode:",
     "<blank>",
 )
 
@@ -177,6 +178,9 @@ def _parse_command(kind: str, body: str) -> Command | None:
         return Command("speak", {"text": text}) if text else None
     if kind == "photo":
         return Command("photo", {"action": "enter"}) if body.strip() == "enter" else None
+    if kind == "mode":
+        mode = body.strip()
+        return Command("mode", {"mode": mode}) if mode in {"guidance", "co-photo"} else None
     if kind == "tachie":
         sprite_id = body.strip()
         if not sprite_id or not re.fullmatch(r"[A-Za-z0-9_.-]+", sprite_id):

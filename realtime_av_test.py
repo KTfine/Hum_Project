@@ -24,7 +24,7 @@ from command_protocol import Command, StreamingCommandParser
 AUDIO_SAMPLE_RATE = 16_000
 AUDIO_SAMPLE_BYTES = 4
 AUDIO_CHUNK_BYTES = AUDIO_SAMPLE_RATE * AUDIO_SAMPLE_BYTES
-CO_PHOTO_GOAL_QUESTION = "你想一起拍什么样的照片？可以告诉我要求，也可以让我推荐一个。"
+MODES = ("guidance", "co-photo")
 
 
 class RealtimeServiceError(RuntimeError):
@@ -292,35 +292,46 @@ class SpeechQueue:
             return self._items.popleft() if self._items else None
 
 
-class CoPhotoSession:
-    """Client-owned, session-local activation and phase-one action permissions."""
+class ModeSelection:
+    """Requested and confirmed prompt mode, independent of frontend actions."""
 
-    def __init__(self) -> None:
-        self._active = False
-        self._goal_requested = False
+    def __init__(self, mode: str = "guidance") -> None:
+        if mode not in MODES:
+            raise ValueError(f"unknown mode: {mode}")
+        self._mode = mode
+        self._revision = 0
+        self._loaded_mode: str | None = None
         self._lock = threading.Lock()
 
     @property
-    def active(self) -> bool:
-        with self._lock:
-            return self._active
+    def mode(self) -> str:
+        return self.snapshot()[0]
 
-    def enter(self) -> bool:
-        """Activate once; repeated invitations do not reset character geometry."""
+    def snapshot(self) -> tuple[str, int]:
         with self._lock:
-            changed = not self._active
-            self._active = True
-            return changed
+            return self._mode, self._revision
 
     @property
-    def allowed_actions(self) -> frozenset[str]:
-        return frozenset({"move"}) if self.active else frozenset()
-
-    def claim_goal_question(self) -> bool:
+    def co_photo_active(self) -> bool | None:
+        """None until session.created; ON/OFF records the last loaded prompt."""
         with self._lock:
-            if not self._active or self._goal_requested:
+            return None if self._loaded_mode is None else self._loaded_mode == "co-photo"
+
+    def mark_loaded(self, mode: str, revision: int) -> bool:
+        with self._lock:
+            if (mode, revision) != (self._mode, self._revision):
                 return False
-            self._goal_requested = True
+            self._loaded_mode = mode
+            return True
+
+    def select(self, mode: str) -> bool:
+        if mode not in MODES:
+            raise ValueError(f"unknown mode: {mode}")
+        with self._lock:
+            if mode == self._mode:
+                return False
+            self._mode = mode
+            self._revision += 1
             return True
 
 
@@ -456,9 +467,9 @@ class CameraSource:
 
 
 class CanvasSource:
-    """Render the character inset or a client-activated camera composite."""
+    """Render a controllable PNG sprite over a white canvas."""
 
-    WINDOW_TITLE = "Photo assistant - press Q to stop"
+    WINDOW_TITLE = "MiniCPM-o sprite test - press Q to stop"
 
     def __init__(
         self,
@@ -482,23 +493,6 @@ class CanvasSource:
         self.controller: SpriteController | None = None
         self._thread = None
         self.error: Exception | None = None
-        self.co_photo = CoPhotoSession()
-        self.camera: CameraSource | None = None
-
-    def set_camera(self, camera: CameraSource | None) -> None:
-        self.camera = camera
-
-    def activate_co_photo(self) -> bool:
-        if self.co_photo.active:
-            return True
-        if (
-            self.controller is None
-            or self.camera is None
-            or self.camera.latest_frame() is None
-        ):
-            return False
-        self.co_photo.enter()
-        return True
 
     @property
     def sprite_ids(self) -> list[str]:
@@ -552,20 +546,15 @@ class CanvasSource:
         return canvas
 
     def _transform_sprite(
-        self,
-        sprite: np.ndarray,
-        state: SpriteState,
-        *,
-        width: int | None = None,
-        height: int | None = None,
+        self, sprite: np.ndarray, state: SpriteState
     ) -> np.ndarray:
         import cv2
 
         sprite_h, sprite_w = sprite.shape[:2]
         fit_scale = min(
             1.0,
-            ((self.width if width is None else width) * 0.9) / sprite_w,
-            ((self.height if height is None else height) * 0.9) / sprite_h,
+            (self.width * 0.9) / sprite_w,
+            (self.height * 0.9) / sprite_h,
         )
         scale = fit_scale * state.scale
         radians = math.radians(state.rotation)
@@ -587,49 +576,10 @@ class CanvasSource:
             borderValue=(0, 0, 0, 0),
         )
 
-    def render_scene(
-        self, camera_frame: np.ndarray | None, now: float | None = None,
-        *, show_status: bool = True,
-    ) -> np.ndarray:
-        """Use the inset while inactive; blend the RGBA character into an active shot."""
-        import cv2
-
-        if self.controller is None:
-            raise RuntimeError("canvas has not been started")
-        active = self.co_photo.active
-        if active and camera_frame is not None:
-            result = camera_frame.copy()
-            height, width = result.shape[:2]
-            state = self.controller.state_at(now)
-            sprite = self._transform_sprite(
-                self.sprites[state.sprite_id], state, width=width, height=height
-            )
-            left = int(round(state.x * width)) - sprite.shape[1] // 2
-            top = int(round(state.y * height)) - sprite.shape[0]
-            alpha_composite_at(result, sprite, left, top)
-        else:
-            result = compose_model_frame(camera_frame, self.render_frame(now))
-        if not show_status:
-            return result
-        # This badge is for the user; model state comes from session instructions.
-        label = "CO-PHOTO: ON" if active else "CO-PHOTO: OFF"
-        font_scale = min(0.5, max(0.15, result.shape[1] / 640))
-        font = cv2.FONT_HERSHEY_SIMPLEX
-        (text_width, text_height), baseline = cv2.getTextSize(label, font, font_scale, 1)
-        cv2.rectangle(
-            result, (0, 0), (text_width + 10, text_height + baseline + 10),
-            (255, 255, 255), -1,
-        )
-        cv2.putText(
-            result, label, (5, text_height + 5), font, font_scale,
-            (0, 0, 0), 1, cv2.LINE_AA,
-        )
-        return result
-
     def latest_jpeg(self, camera_frame: np.ndarray | None = None) -> bytes:
         import cv2
 
-        frame = self.render_scene(camera_frame, show_status=False)
+        frame = compose_model_frame(camera_frame, self.render_frame())
         ok, encoded = cv2.imencode(
             ".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), self.jpeg_quality]
         )
@@ -642,8 +592,7 @@ class CanvasSource:
 
         try:
             while not self.stop_event.is_set():
-                frame = self.camera.latest_frame() if self.camera is not None else None
-                cv2.imshow(self.WINDOW_TITLE, self.render_scene(frame))
+                cv2.imshow(self.WINDOW_TITLE, self.render_frame())
                 if cv2.waitKey(16) & 0xFF in (ord("q"), ord("Q")):
                     self.stop_event.set()
                     break
@@ -857,16 +806,6 @@ async def send_realtime_inputs(
         await asyncio.sleep(delay)
 
 
-def request_co_photo_goal(
-    co_photo: CoPhotoSession, speech_queue: SpeechQueue,
-    event_log: FrontendEventLogger | None = None,
-) -> None:
-    if co_photo.claim_goal_question():
-        speech_queue.enqueue(CO_PHOTO_GOAL_QUESTION)
-        if event_log is not None:
-            event_log.record("co_photo.goal_requested", text=CO_PHOTO_GOAL_QUESTION)
-
-
 def dispatch_model_commands(
     commands: list[Command],
     canvas: CanvasSource,
@@ -874,48 +813,29 @@ def dispatch_model_commands(
     event_log: FrontendEventLogger | None = None,
     *,
     verbose: bool = False,
-    allowed_actions: frozenset[str] | None = None,
-    co_photo: CoPhotoSession | None = None,
-    defer_goal_question: bool = False,
+    mode_selection: ModeSelection | None = None,
 ) -> None:
-    """Dispatch valid commands; invalid semantic commands are silently ignored."""
+    """Dispatch valid commands without mode-based action filtering."""
     for command in commands:
         if command.kind == "speak":
             speech_queue.enqueue(str(command.params["text"]))
         elif command.kind == "blank":
             if verbose:
                 print("[blank]", flush=True)
+        elif command.kind == "mode":
+            if mode_selection is not None:
+                changed = mode_selection.select(str(command.params["mode"]))
+                if event_log is not None:
+                    event_log.record("session.mode_requested", mode=mode_selection.mode,
+                                     changed=changed, co_photo_active=mode_selection.co_photo_active)
         elif command.kind == "photo":
-            was_active = co_photo.active if co_photo is not None else False
-            activated = (
-                co_photo is not None
-                and command.params.get("action") == "enter"
-                and canvas.activate_co_photo()
-            )
-            if activated:
-                if not was_active:
-                    if not defer_goal_question:
-                        request_co_photo_goal(co_photo, speech_queue, event_log)
-                    print("[co-photo] activated; move commands enabled", flush=True)
-                    if event_log is not None:
-                        event_log.record(
-                            "co_photo.activated", source="model_request",
-                            allowed_actions=sorted(co_photo.allowed_actions),
-                        )
-            elif event_log is not None:
+            # Old recordings remain parseable; mode tags now select prompts.
+            if event_log is not None:
                 event_log.record(
-                    "command.blocked", command=asdict(command),
-                    reason=("co_photo_camera_unavailable" if co_photo is not None
-                            else "co_photo_not_managed"),
+                    "command.skipped", command=asdict(command),
+                    reason="legacy_photo_entry_use_mode_tag",
                 )
         else:
-            if (
-                (allowed_actions is not None and command.kind not in allowed_actions)
-                or (co_photo is not None and command.kind not in co_photo.allowed_actions)
-            ):
-                if event_log is not None:
-                    event_log.record("command.blocked", command=asdict(command), reason="action_not_enabled")
-                continue
             try:
                 target = canvas.apply_command(command)
             except (TypeError, ValueError, RuntimeError) as exc:
@@ -954,9 +874,7 @@ async def receive_realtime_outputs(
     *,
     verbose: bool,
     event_log: FrontendEventLogger | None = None,
-    allowed_actions: frozenset[str] | None = None,
-    co_photo: CoPhotoSession | None = None,
-    defer_goal_question: bool = False,
+    mode_selection: ModeSelection | None = None,
 ) -> None:
     """Dispatch tag commands and adapt untagged model text into speech."""
     parser = StreamingCommandParser(allow_plain_speech=True)
@@ -986,9 +904,7 @@ async def receive_realtime_outputs(
                     event_log.record("parser.command", command=asdict(command))
             dispatch_model_commands(
                 commands, canvas, speech_queue, event_log, verbose=verbose,
-                allowed_actions=allowed_actions,
-                co_photo=co_photo,
-                defer_goal_question=defer_goal_question,
+                mode_selection=mode_selection,
             )
         elif kind in ("listen", "done"):
             parser.flush(response_id if kind == "done" else None)
@@ -1020,39 +936,32 @@ def make_tls_context(insecure: bool) -> ssl.SSLContext:
 
 
 def build_control_prompt(
-    canvas: CanvasSource, args: argparse.Namespace, *, action_only: bool = False
+    canvas: CanvasSource, args: argparse.Namespace, *, mode: str | None = None
 ) -> str:
-    from prompt import (
-        STREAMING_COMMAND_PROMPT, CO_PHOTO_COMMAND_PROMPT,
-        CO_PHOTO_ACTION_DIAGNOSTIC_PROMPT,
-    )
+    from prompt import PHOTO_GUIDANCE_PROMPT, CO_PHOTO_COMMAND_PROMPT
 
     if canvas.controller is None:
         raise RuntimeError("canvas has not been started")
-    if action_only and not canvas.co_photo.active:
-        raise ValueError("action-only diagnostics require an active co-photo session")
-    template = (
-        CO_PHOTO_ACTION_DIAGNOSTIC_PROMPT if action_only else
-        CO_PHOTO_COMMAND_PROMPT if canvas.co_photo.active else STREAMING_COMMAND_PROMPT
-    )
+    mode = "guidance" if mode is None else mode
+    templates = {"guidance": PHOTO_GUIDANCE_PROMPT, "co-photo": CO_PHOTO_COMMAND_PROMPT}
+    template = templates[mode]
     return template.format(
         character_name=args.character_name,
         character_persona=args.character_persona,
         response_language="中文",
         sprite_catalog=", ".join(canvas.sprite_ids),
         current_character_state=json.dumps(
-            {**asdict(canvas.controller.state_at()), "co_photo_active": canvas.co_photo.active},
-            ensure_ascii=False,
+            asdict(canvas.controller.state_at()), ensure_ascii=False,
         ),
-        recent_context=("客户端已确认合照开启，将询问本轮合照目标。"
-                        if canvas.co_photo.active else "新会话，尚未收到合照邀请。"),
+        recent_context=("开始合照互动的新会话。"
+                        if mode == "co-photo" else "开始真人拍照指导的新会话。"),
         extra_instructions="用户通过麦克风与你说话；保持回复简短。",
     )
 
 
-async def wait_for_co_photo_activation(co_photo, stop_event) -> bool:
+async def wait_for_mode_change(selection, revision, stop_event) -> bool:
     while not stop_event.is_set():
-        if co_photo.active:
+        if selection.snapshot()[1] != revision:
             return True
         await asyncio.sleep(0.05)
     return False
@@ -1088,14 +997,13 @@ async def close_model_session(websocket, reason, event_log=None) -> None:
 
 async def run_realtime_sessions(
     connect, ws_url, ssl_context, canvas, camera, audio_buffer,
-    speech_queue, stop_event, args, *, event_log=None,
+    speech_queue, stop_event, args, *, event_log=None, mode_selection=None,
 ) -> None:
-    """Refresh model instructions once when the client activates co-photo."""
+    """Reload task prompts from model mode tags; mode never gates actions."""
+    selection = mode_selection if mode_selection is not None else ModeSelection()
     while not stop_event.is_set():
-        active_at_open = canvas.co_photo.active
-        system_prompt = args.prompt or build_control_prompt(
-            canvas, args, action_only=args.action_only_test
-        )
+        mode, revision = selection.snapshot()
+        system_prompt = args.prompt or build_control_prompt(canvas, args, mode=mode)
         websocket, created = await connect_and_open_session_with_retry(
             connect, ws_url, ssl_context,
             build_session_init(system_prompt, use_tts=False),
@@ -1108,28 +1016,34 @@ async def run_realtime_sessions(
         try:
             if stop_event.is_set():
                 return
+            if not args.prompt and not selection.mark_loaded(mode, revision):
+                # A newer request superseded the prompt during initialization.
+                # Release the old worker before opening the latest selection.
+                switched = True
+                continue
             print(f"[session] created: {created.get('session_id', 'unknown')}", flush=True)
-            if active_at_open and not args.action_only_test:
-                request_co_photo_goal(canvas.co_photo, speech_queue, event_log)
-                dispatch_model_commands([], canvas, speech_queue, event_log, co_photo=canvas.co_photo)
-            refresh_on_entry = not active_at_open and not args.prompt and not args.action_only_test
+            if args.prompt:
+                print("[mode] custom prompt; automatic mode switching disabled", flush=True)
+            else:
+                print(f"[mode] loaded: {'ON' if selection.co_photo_active else 'OFF'} ({mode})", flush=True)
+            if event_log is not None:
+                event_log.record("session.mode_ready", mode="custom" if args.prompt else mode, revision=revision,
+                                 co_photo_active=selection.co_photo_active,
+                                 custom_prompt=bool(args.prompt))
             sender = asyncio.create_task(send_realtime_inputs(
                 websocket, canvas, camera, audio_buffer, stop_event, event_log=event_log,
             ), name="realtime-sender")
             receiver = asyncio.create_task(receive_realtime_outputs(
                 websocket, stop_event, canvas, speech_queue, verbose=args.verbose,
-                event_log=event_log, co_photo=canvas.co_photo,
-                defer_goal_question=refresh_on_entry,
+                event_log=event_log, mode_selection=None if args.prompt else selection,
             ), name="realtime-receiver")
             tasks.extend([sender, receiver])
-            switch = None
-            if refresh_on_entry:
-                switch = asyncio.create_task(wait_for_co_photo_activation(canvas.co_photo, stop_event))
-                tasks.append(switch)
+            switch = asyncio.create_task(wait_for_mode_change(selection, revision, stop_event))
+            tasks.append(switch)
             done, _pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
             for task in done:
                 task.result()
-            switched = switch is not None and switch in done and switch.result() and not stop_event.is_set()
+            switched = switch in done and switch.result() and not stop_event.is_set()
         finally:
             # Stop readers first: this intentional close must not set the
             # application-wide stop flag or close the camera/microphone.
@@ -1137,13 +1051,13 @@ async def run_realtime_sessions(
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
             await close_model_session(
-                websocket, "co_photo_state_changed" if switched else "client_stop", event_log,
+                websocket, "mode_changed" if switched else "client_stop", event_log,
             )
         if not switched:
             return
         if event_log is not None:
-            event_log.record("session.prompt_refresh", co_photo_active=True)
-        print("[session] refreshing instructions for active co-photo", flush=True)
+            event_log.record("session.prompt_refresh", mode=selection.mode)
+        print("[session] switching prompt; old audio/video context resets", flush=True)
 
 
 async def run_probe(
@@ -1168,9 +1082,6 @@ async def run_probe(
         preview=not args.no_preview,
     )
     camera = None if args.no_camera else CameraSource(args.camera_device, stop_event)
-    canvas.set_camera(camera)
-    if args.action_only_test:
-        canvas.WINDOW_TITLE = "Action-only diagnostic - already active - Q stops"
     microphone = None if args.no_mic else MicrophoneSource(audio_buffer, args.input_device)
     speech_queue = SpeechQueue()
     ws_url = normalize_video_ws_url(args.url)
@@ -1180,11 +1091,6 @@ async def run_probe(
         if camera is not None:
             camera.start()
         canvas.start()
-        if args.action_only_test:
-            if not canvas.activate_co_photo():
-                raise RuntimeError("action-only diagnostics require a fresh camera frame")
-            if event_log is not None:
-                event_log.record("test.co_photo_initialized", source="explicit_action_only_flag")
         if microphone is not None:
             microphone.start()
     except Exception:
@@ -1208,7 +1114,6 @@ async def run_probe(
             microphone_enabled=not args.no_mic,
             camera_enabled=not args.no_camera,
             camera_device=args.camera_device,
-            action_only_test=args.action_only_test,
         )
 
     print(f"[sprites] {', '.join(canvas.sprite_ids)}", flush=True)
@@ -1260,10 +1165,6 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument(
         "--prompt", help="override the generated streaming-command system prompt"
     )
-    parser.add_argument(
-        "--action-only-test", action="store_true",
-        help="Explicit live movement diagnostic: start co-photo active with the short action-only prompt",
-    )
     parser.add_argument("--character-name", default="早苗")
     parser.add_argument(
         "--character-persona",
@@ -1292,8 +1193,6 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--connect-timeout", type=float, default=10.0)
     parser.add_argument("--session-timeout", type=float, default=120.0)
     args = parser.parse_args(argv)
-    if args.action_only_test and (args.no_camera or args.prompt):
-        parser.error("--action-only-test requires a camera and cannot be combined with --prompt")
     if not 1 <= args.jpeg_quality <= 100:
         parser.error("--jpeg-quality must be between 1 and 100")
     if args.canvas_width <= 0 or args.canvas_height <= 0:

@@ -31,8 +31,8 @@ async def run(args):
     out.mkdir(parents=True, exist_ok=True)
     stop = threading.Event()
     canvas = client.CanvasSource(SOURCE / 'tachie/sanae', 'normal', 1280, 720, 80, stop, preview=args.preview)
+    selection = client.ModeSelection()
     camera = None if args.no_camera else client.CameraSource(0, stop)
-    canvas.set_camera(camera)
     logger = client.FrontendEventLogger(out / 'effect-probe.jsonl')
     canvas.start()
     cv2.imwrite(str(out / 'initial-avatar.png'), canvas.render_frame())
@@ -42,32 +42,27 @@ async def run(args):
         if camera is not None:
             camera.start()
             print('CAMERA_FRAME', camera.latest_frame().shape, flush=True)
-        if getattr(args, 'start_co_photo', False):
-            if not getattr(args, 'co_photo', False) or not canvas.activate_co_photo():
-                raise ValueError('--start-co-photo requires --co-photo and a fresh camera frame')
-            logger.record('test.co_photo_initialized', source='explicit_probe_flag')
         prompt_args = client.parse_args([])
-        prompt = client.build_control_prompt(canvas, prompt_args, action_only=getattr(args, 'action_only', False))
+        mode, revision = selection.snapshot()
+        prompt = client.build_control_prompt(canvas, prompt_args, mode=mode)
         if args.prompt_file:
             prompt = Path(args.prompt_file).read_text(encoding='utf-8')
         init = client.build_session_init(prompt, use_tts=False)
         if args.generation_config:
             init['payload']['config'].update(json.loads(args.generation_config))
-        managed = getattr(args, 'co_photo', False)
-        refresh_on_entry = managed and not canvas.co_photo.active and not args.prompt_file
         speech_queue = client.SpeechQueue()
         websocket, created = await client.connect_and_open_session_with_retry(
             websockets.connect, client.normalize_video_ws_url(args.url), client.make_tls_context(True),
             init, connect_timeout=15, session_timeout=120, event_log=logger,
         )
         print('SESSION', created.get('session_id'), flush=True)
-        if managed and canvas.co_photo.active and not getattr(args, 'action_only', False):
-            client.request_co_photo_goal(canvas.co_photo, speech_queue, logger)
-            client.dispatch_model_commands([], canvas, speech_queue, logger, co_photo=canvas.co_photo)
+        if not args.prompt_file:
+            selection.mark_loaded(mode, revision)
+        logger.record('session.mode_ready', mode='custom' if args.prompt_file else mode,
+                      co_photo_active=selection.co_photo_active)
         receiver = asyncio.create_task(client.receive_realtime_outputs(
             websocket, stop, canvas, speech_queue, verbose=True, event_log=logger,
-            co_photo=canvas.co_photo if managed else None,
-            defer_goal_question=refresh_on_entry,
+            mode_selection=None if args.prompt_file else selection,
         ))
         timeline = np.zeros(args.seconds * 16000, dtype='<f4')
         instructions = [(3, 'move_left_smile.wav'), (25, 'return_center.wav')]
@@ -87,11 +82,13 @@ async def run(args):
         for sequence in range(args.seconds):
             if stop.is_set() or receiver.done():
                 break
-            if refresh_on_entry and canvas.co_photo.active:
+            if selection.snapshot()[1] != revision:
                 receiver.cancel()
                 await asyncio.gather(receiver, return_exceptions=True)
-                await client.close_model_session(websocket, 'co_photo_state_changed', logger)
-                prompt = client.build_control_prompt(canvas, prompt_args)
+                await client.close_model_session(websocket, 'mode_changed', logger)
+                mode, revision = selection.snapshot()
+                prompt = (Path(args.prompt_file).read_text(encoding='utf-8') if args.prompt_file
+                          else client.build_control_prompt(canvas, prompt_args, mode=mode))
                 init = client.build_session_init(prompt, use_tts=False)
                 if args.generation_config:
                     init['payload']['config'].update(json.loads(args.generation_config))
@@ -99,14 +96,13 @@ async def run(args):
                     websockets.connect, client.normalize_video_ws_url(args.url), client.make_tls_context(True),
                     init, connect_timeout=15, session_timeout=120, event_log=logger,
                 )
-                logger.record('session.prompt_refresh', co_photo_active=True)
-                client.request_co_photo_goal(canvas.co_photo, speech_queue, logger)
-                client.dispatch_model_commands([], canvas, speech_queue, logger, co_photo=canvas.co_photo)
+                logger.record('session.prompt_refresh', mode=mode)
+                selection.mark_loaded(mode, revision)
+                logger.record('session.mode_ready', mode=mode, co_photo_active=selection.co_photo_active)
                 receiver = asyncio.create_task(client.receive_realtime_outputs(
                     websocket, stop, canvas, speech_queue, verbose=True,
-                    event_log=logger, co_photo=canvas.co_photo,
+                    event_log=logger, mode_selection=None if args.prompt_file else selection,
                 ))
-                refresh_on_entry = False
             frame = camera.latest_frame() if camera is not None else None
             if args.visual_check and sequence >= 40 and frame is not None:
                 frame = frame.copy()
@@ -117,12 +113,10 @@ async def run(args):
             await websocket.send(json.dumps(message))
             logger.record_message('gateway.send', message)
             current = canvas.controller.state_at()
-            samples.append({'second': sequence, 'co_photo_active': canvas.co_photo.active, **asdict(current)})
-            snapshot = {'co_photo_active': canvas.co_photo.active, **asdict(current)}
+            samples.append({'second': sequence, 'co_photo_active': selection.co_photo_active, **asdict(current)})
+            snapshot = {'co_photo_active': selection.co_photo_active, **asdict(current)}
             if snapshot != last_snapshot_state:
                 cv2.imwrite(str(out / f'state-{sequence:03d}.png'), canvas.render_frame())
-                if getattr(args, 'co_photo', False):
-                    cv2.imwrite(str(out / f'scene-{sequence:03d}.png'), canvas.render_scene(frame))
                 last_snapshot_state = snapshot
             shift = abs(current.x - 0.5)
             if shift > max_shift:
@@ -131,10 +125,7 @@ async def run(args):
             await asyncio.sleep(max(0, began + sequence + 1 - time.monotonic()))
         final = asdict(canvas.controller.state_at())
         cv2.imwrite(str(out / 'final-avatar.png'), canvas.render_frame())
-        if getattr(args, 'co_photo', False):
-            frame = camera.latest_frame() if camera is not None else None
-            cv2.imwrite(str(out / 'final-scene.png'), canvas.render_scene(frame))
-        (out / 'effect-state.json').write_text(json.dumps({'session_id': created.get('session_id'), 'max_horizontal_shift': max_shift, 'co_photo_active': canvas.co_photo.active, 'states': samples, 'final': final}, ensure_ascii=False, indent=2), encoding='utf-8')
+        (out / 'effect-state.json').write_text(json.dumps({'session_id': created.get('session_id'), 'max_horizontal_shift': max_shift, 'co_photo_active': selection.co_photo_active, 'states': samples, 'final': final}, ensure_ascii=False, indent=2), encoding='utf-8')
         print('FINAL_STATE', json.dumps(final, ensure_ascii=False), flush=True)
         if receiver.done():
             receiver.result()
@@ -168,12 +159,5 @@ if __name__ == '__main__':
     parser.add_argument('--prompt-file')
     parser.add_argument('--instructions-file')
     parser.add_argument('--generation-config')
-    parser.add_argument('--co-photo', action='store_true', help='Test the normal invitation gate and move-only permissions')
-    parser.add_argument('--start-co-photo', action='store_true', help='Initialize this diagnostic as already active; does not test invitation recognition')
-    parser.add_argument('--action-only', action='store_true', help='Use the short movement-only diagnostic prompt; excludes photography conversation')
     args = parser.parse_args()
-    if args.start_co_photo and not args.co_photo:
-        parser.error('--start-co-photo requires --co-photo')
-    if args.action_only and (not args.co_photo or not args.start_co_photo or args.prompt_file):
-        parser.error('--action-only requires --co-photo --start-co-photo and cannot override --prompt-file')
     asyncio.run(run(args))
