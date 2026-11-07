@@ -24,7 +24,10 @@ class StreamingCommandPromptTests(unittest.TestCase):
         self.assertIn("用户希望拍一张严肃的证件照", rendered)
         self.assertIn("当前任务：真人拍照指导", rendered)
         import re
-        self.assertEqual(set(re.findall(r'<([a-z]+)(?=[:>])', rendered)), {'speak', 'move', 'scale', 'rotate', 'tachie', 'blank', 'mode'})
+        self.assertEqual(set(re.findall(r'<([a-z]+)(?=[:>])', rendered)), {'speak', 'blank', 'mode'})
+        self.assertNotIn('可用立绘 ID', rendered)
+        self.assertNotIn('初始角色状态', rendered)
+        self.assertNotIn('x=0.5', rendered)
 
     def test_co_photo_prompt_retains_guidance_and_movement(self):
         import prompt
@@ -34,14 +37,16 @@ class StreamingCommandPromptTests(unittest.TestCase):
         self.assertIn("真人拍照建议", rendered)
         self.assertIn("表情", rendered)
         self.assertIn("推荐", rendered)
+        self.assertIn('可用立绘 ID：normal, smile, thinking', rendered)
+        self.assertIn('x=0.5', rendered)
         self.assertEqual(set(re.findall(r'<([a-z]+)(?=[:>])', rendered)), {'speak', 'move', 'scale', 'rotate', 'tachie', 'blank', 'mode'})
 
     def test_photography_guidance_is_derived_from_user_instruction(self):
         rendered = self.render_prompt()
 
         self.assertIn("根据用户当前的拍摄目标", rendered)
-        self.assertIn("主画面是真人", rendered)
-        self.assertIn("右上角白底小窗", rendered)
+        self.assertIn("画面来自真人摄像头", rendered)
+        self.assertNotIn("右上角白底小窗", rendered)
         self.assertNotIn("下巴", rendered)
         self.assertNotIn("侧脸", rendered)
         self.assertNotIn("微笑更好", rendered)

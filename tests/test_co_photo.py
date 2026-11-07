@@ -100,11 +100,12 @@ class ModeTests(unittest.TestCase):
         self.assertEqual(self.selection.mode, 'co-photo')
         self.assertAlmostEqual(self.canvas.controller.state_at().x, 0.4)
 
-    def test_frontend_stays_white_and_model_input_stays_camera_plus_inset(self):
+    def test_co_photo_keeps_white_preview_and_camera_plus_inset(self):
         camera = np.full((100, 200, 3), (10, 20, 30), dtype=np.uint8)
         before = self.canvas.render_frame()
+        self.canvas.configure_view(None, show_character=True)
         self.dispatch('<mode:co-photo>')
-        np.testing.assert_array_equal(self.canvas.render_frame(), before)
+        np.testing.assert_array_equal(self.canvas.render_preview_frame(), before)
         self.assertEqual(before[0, 0].tolist(), [255, 255, 255])
         decoded = cv2.imdecode(np.frombuffer(self.canvas.latest_jpeg(camera), dtype=np.uint8),
                                cv2.IMREAD_COLOR)
@@ -112,6 +113,34 @@ class ModeTests(unittest.TestCase):
         # Sprite stays in the upstream inset rather than being overlaid on the person.
         np.testing.assert_allclose(decoded[85, 100], camera[85, 100], atol=4)
         np.testing.assert_array_equal(camera, np.full_like(camera, (10, 20, 30)))
+
+    def test_guidance_preview_and_model_frame_contain_only_the_camera(self):
+        camera = np.full((100, 200, 3), (10, 20, 30), dtype=np.uint8)
+        source = type('Camera', (), {'latest_frame': lambda _: camera})()
+        self.canvas.configure_view(source, show_character=False)
+        preview = self.canvas.render_preview_frame()
+        np.testing.assert_array_equal(preview, camera)
+        self.assertIsNot(preview, camera)
+        jpeg = self.canvas.latest_jpeg(camera, include_character=False)
+        ok, expected = cv2.imencode('.jpg', camera, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+        self.assertTrue(ok)
+        self.assertEqual(jpeg, expected.tobytes())
+        # A valid model action remains executable while its character is hidden.
+        self.dispatch('<move:to,x=0.2,ms=0><tachie:smile>')
+        np.testing.assert_array_equal(self.canvas.render_preview_frame(), camera)
+        self.assertEqual(self.canvas.controller.state_at().sprite_id, 'smile')
+        self.assertAlmostEqual(self.canvas.controller.state_at().x, 0.2)
+        self.canvas.configure_view(source, show_character=True)
+        self.assertFalse(np.array_equal(self.canvas.render_preview_frame(), camera))
+        self.assertAlmostEqual(self.canvas.controller.state_at().x, 0.2)
+
+    def test_guidance_without_camera_does_not_fall_back_to_a_character(self):
+        self.canvas.configure_view(None, show_character=False)
+        np.testing.assert_array_equal(self.canvas.render_preview_frame(),
+                                      np.full((100, 200, 3), 255, dtype=np.uint8))
+        jpeg = self.canvas.latest_jpeg(None, include_character=False)
+        decoded = cv2.imdecode(np.frombuffer(jpeg, dtype=np.uint8), cv2.IMREAD_COLOR)
+        self.assertTrue(np.all(decoded == 255))
 
     def test_removed_diagnostic_and_manual_mode_cli_are_rejected(self):
         for args in [['--action-only-test'], ['--mode', 'co-photo']]:

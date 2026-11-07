@@ -1,5 +1,6 @@
 """Exercise model-selected prompt reloads, with actual parsing and dispatch."""
 import asyncio
+import base64
 import contextlib
 import io
 import json
@@ -92,6 +93,8 @@ class PromptHandoffTests(unittest.IsolatedAsyncioTestCase):
         for prompt, task in zip(self.prompts, ['真人拍照指导', '合照互动', '真人拍照指导']):
             self.assertIn(f'当前任务：{task}', prompt)
         self.assertIn('"x": 0.4', self.prompts[1])
+        self.assertNotIn('"x":', self.prompts[0])
+        self.assertNotIn('"x":', self.prompts[2])
         self.assertAlmostEqual(self.canvas.controller.state_at().x, 0.3)
         self.assertAlmostEqual(self.canvas.controller.state_at().y, 0.8)
         self.assertEqual(self.canvas.controller.state_at().scale, 0.8)
@@ -100,6 +103,18 @@ class PromptHandoffTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([r['text'] for r in self.log.rows if r['event']=='speak'], ['继续。'])
         self.assertTrue(all(s.closed for s in sockets))
         self.assertEqual(sockets[0].sent[-1]['reason'], 'mode_changed')
+        self.assertEqual([r['include_character'] for r in self.log.rows if r['event']=='session.mode_ready'],
+                         [False, True, False])
+        for index, socket in enumerate(sockets):
+            messages = [m for m in socket.sent if m['type'] == 'input.append']
+            self.assertTrue(messages)
+            data = base64.b64decode(messages[0]['input']['video_frames'][0])
+            frame = cv2.imdecode(np.frombuffer(data, dtype=np.uint8), cv2.IMREAD_COLOR)
+            if index == 1:
+                self.assertGreater(float(frame.mean()), 1)
+            else:
+                self.assertTrue(np.all(frame == 0))
+        np.testing.assert_array_equal(self.canvas.render_preview_frame(), self.camera.latest_frame())
 
     async def test_same_mode_and_plain_invitation_do_not_reconnect(self):
         socket = Socket([text('和我合照。<mode:guidance><speak:你好。>'), {'type':'session.closed'}])
@@ -123,6 +138,7 @@ class PromptHandoffTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.selection.co_photo_active)
         self.assertEqual(self.selection.mode, 'co-photo')
         self.assertEqual(sum(r['event']=='session.mode_ready' for r in self.log.rows), 1)
+        np.testing.assert_array_equal(self.canvas.render_preview_frame(), self.camera.latest_frame())
 
     async def test_custom_override_has_no_builtin_mode_claim_or_reload(self):
         self.args.prompt = 'custom instructions'
@@ -199,6 +215,13 @@ class PromptHandoffTests(unittest.IsolatedAsyncioTestCase):
         rows = [json.loads(line) for line in (media/'replay/effect-probe.jsonl').read_text(encoding='utf-8').splitlines()]
         self.assertEqual([r['co_photo_active'] for r in rows if r['event']=='session.mode_ready'],
                          [False, True, False])
+        self.assertEqual([r['include_character'] for r in rows if r['event']=='session.mode_ready'],
+                         [False, True, False])
+        for index, socket in enumerate(sockets):
+            message = next(m for m in socket.sent if m['type']=='input.append')
+            data = base64.b64decode(message['input']['video_frames'][0])
+            frame = cv2.imdecode(np.frombuffer(data, dtype=np.uint8), cv2.IMREAD_COLOR)
+            self.assertEqual(bool(np.any(frame)), index == 1)
         self.assertAlmostEqual(self.canvas.controller.state_at().x, 0.3)
 
 

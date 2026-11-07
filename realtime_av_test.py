@@ -467,9 +467,9 @@ class CameraSource:
 
 
 class CanvasSource:
-    """Render a controllable PNG sprite over a white canvas."""
+    """Keep sprite state while selecting camera-only or character views."""
 
-    WINDOW_TITLE = "MiniCPM-o sprite test - press Q to stop"
+    WINDOW_TITLE = "MiniCPM-o photo assistant - press Q to stop"
 
     def __init__(
         self,
@@ -493,6 +493,24 @@ class CanvasSource:
         self.controller: SpriteController | None = None
         self._thread = None
         self.error: Exception | None = None
+        self._preview_camera: CameraSource | None = None
+        self._show_character = True
+
+    def configure_view(self, camera: CameraSource | None, *, show_character: bool) -> None:
+        """Change presentation only; commands remain executable in either view."""
+        self._preview_camera = camera
+        self._show_character = show_character
+
+    def render_camera_frame(self, camera_frame: np.ndarray | None) -> np.ndarray:
+        if camera_frame is None:
+            return np.full((self.height, self.width, 3), 255, dtype=np.uint8)
+        return camera_frame.copy()
+
+    def render_preview_frame(self) -> np.ndarray:
+        if self._show_character:
+            return self.render_frame()
+        camera = self._preview_camera
+        return self.render_camera_frame(camera.latest_frame() if camera is not None else None)
 
     @property
     def sprite_ids(self) -> list[str]:
@@ -576,10 +594,13 @@ class CanvasSource:
             borderValue=(0, 0, 0, 0),
         )
 
-    def latest_jpeg(self, camera_frame: np.ndarray | None = None) -> bytes:
+    def latest_jpeg(
+        self, camera_frame: np.ndarray | None = None, *, include_character: bool = True
+    ) -> bytes:
         import cv2
 
-        frame = compose_model_frame(camera_frame, self.render_frame())
+        frame = (compose_model_frame(camera_frame, self.render_frame()) if include_character
+                 else self.render_camera_frame(camera_frame))
         ok, encoded = cv2.imencode(
             ".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), self.jpeg_quality]
         )
@@ -592,7 +613,7 @@ class CanvasSource:
 
         try:
             while not self.stop_event.is_set():
-                cv2.imshow(self.WINDOW_TITLE, self.render_frame())
+                cv2.imshow(self.WINDOW_TITLE, self.render_preview_frame())
                 if cv2.waitKey(16) & 0xFF in (ord("q"), ord("Q")):
                     self.stop_event.set()
                     break
@@ -785,14 +806,15 @@ async def send_realtime_inputs(
     stop_event: threading.Event,
     *,
     event_log: FrontendEventLogger | None = None,
+    include_character: bool = True,
 ) -> None:
-    """Send real-time audio and periodically attach camera plus character inset."""
+    """Send audio and the image layout selected for this inference session."""
     loop = asyncio.get_running_loop()
     next_tick = loop.time()
     sequence = 0
     while not stop_event.is_set():
         camera_frame = camera.latest_frame() if camera is not None else None
-        jpeg = canvas.latest_jpeg(camera_frame)
+        jpeg = canvas.latest_jpeg(camera_frame, include_character=include_character)
         sequence += 1
         message = build_video_input(sequence, audio_buffer.pop_chunk(), jpeg)
         await websocket.send(json.dumps(message, ensure_ascii=False))
@@ -1021,6 +1043,8 @@ async def run_realtime_sessions(
                 # Release the old worker before opening the latest selection.
                 switched = True
                 continue
+            include_character = bool(args.prompt) or mode == "co-photo"
+            canvas.configure_view(camera, show_character=include_character)
             print(f"[session] created: {created.get('session_id', 'unknown')}", flush=True)
             if args.prompt:
                 print("[mode] custom prompt; automatic mode switching disabled", flush=True)
@@ -1029,9 +1053,11 @@ async def run_realtime_sessions(
             if event_log is not None:
                 event_log.record("session.mode_ready", mode="custom" if args.prompt else mode, revision=revision,
                                  co_photo_active=selection.co_photo_active,
+                                 include_character=include_character,
                                  custom_prompt=bool(args.prompt))
             sender = asyncio.create_task(send_realtime_inputs(
                 websocket, canvas, camera, audio_buffer, stop_event, event_log=event_log,
+                include_character=include_character,
             ), name="realtime-sender")
             receiver = asyncio.create_task(receive_realtime_outputs(
                 websocket, stop_event, canvas, speech_queue, verbose=args.verbose,
@@ -1082,6 +1108,7 @@ async def run_probe(
         preview=not args.no_preview,
     )
     camera = None if args.no_camera else CameraSource(args.camera_device, stop_event)
+    canvas.configure_view(camera, show_character=bool(args.prompt))
     microphone = None if args.no_mic else MicrophoneSource(audio_buffer, args.input_device)
     speech_queue = SpeechQueue()
     ws_url = normalize_video_ws_url(args.url)

@@ -33,6 +33,7 @@ async def run(args):
     canvas = client.CanvasSource(SOURCE / 'tachie/sanae', 'normal', 1280, 720, 80, stop, preview=args.preview)
     selection = client.ModeSelection()
     camera = None if args.no_camera else client.CameraSource(0, stop)
+    canvas.configure_view(camera, show_character=bool(args.prompt_file))
     logger = client.FrontendEventLogger(out / 'effect-probe.jsonl')
     canvas.start()
     cv2.imwrite(str(out / 'initial-avatar.png'), canvas.render_frame())
@@ -58,8 +59,10 @@ async def run(args):
         print('SESSION', created.get('session_id'), flush=True)
         if not args.prompt_file:
             selection.mark_loaded(mode, revision)
+        include_character = bool(args.prompt_file) or mode == 'co-photo'
+        canvas.configure_view(camera, show_character=include_character)
         logger.record('session.mode_ready', mode='custom' if args.prompt_file else mode,
-                      co_photo_active=selection.co_photo_active)
+                      co_photo_active=selection.co_photo_active, include_character=include_character)
         receiver = asyncio.create_task(client.receive_realtime_outputs(
             websocket, stop, canvas, speech_queue, verbose=True, event_log=logger,
             mode_selection=None if args.prompt_file else selection,
@@ -98,7 +101,10 @@ async def run(args):
                 )
                 logger.record('session.prompt_refresh', mode=mode)
                 selection.mark_loaded(mode, revision)
-                logger.record('session.mode_ready', mode=mode, co_photo_active=selection.co_photo_active)
+                include_character = mode == 'co-photo'
+                canvas.configure_view(camera, show_character=include_character)
+                logger.record('session.mode_ready', mode=mode, co_photo_active=selection.co_photo_active,
+                              include_character=include_character)
                 receiver = asyncio.create_task(client.receive_realtime_outputs(
                     websocket, stop, canvas, speech_queue, verbose=True,
                     event_log=logger, mode_selection=None if args.prompt_file else selection,
@@ -107,7 +113,7 @@ async def run(args):
             if args.visual_check and sequence >= 40 and frame is not None:
                 frame = frame.copy()
                 cv2.rectangle(frame, (20, 20), (150, 150), (0, 0, 255), thickness=-1)
-            jpeg = canvas.latest_jpeg(frame)
+            jpeg = canvas.latest_jpeg(frame, include_character=include_character)
             audio = timeline[sequence * 16000:(sequence + 1) * 16000].tobytes()
             message = client.build_video_input(sequence + 1, audio, jpeg)
             await websocket.send(json.dumps(message))
