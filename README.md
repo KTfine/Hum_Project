@@ -1,14 +1,21 @@
 # Human-Centered AI 拍照助手
 
-基于 MiniCPM-o 4.5 的实时拍照指导与二次元伙伴互动原型，沿用 [AIAA3800](https://github.com/DDRP674/AIAA3800/tree/177d70afd6d8e6d95d619621c61117cef8cd59cd) 的客户端与立绘素材。
+拍照指导与二次元伙伴互动原型，提供 **DeepSeek API 实验入口**和 **MiniCPM-o 4.5 实时客户端**，沿用 [AIAA3800](https://github.com/DDRP674/AIAA3800/tree/177d70afd6d8e6d95d619621c61117cef8cd59cd) 的客户端与立绘素材。
+
+| 你想做什么 | 入口 |
+|---|---|
+| 用 API 测 prompt、图片、多轮对话，和合作者开发模块 | [API 快速开始与模块接口](docs/api-experiments.md)，无需 GPU / SSH |
+| 使用摄像头、麦克风和立绘窗口连接自部署服务 | 下方 MiniCPM 实时客户端说明 |
+
+API 入口：安装 `requirements-api.txt`，设置自己的 `DEEPSEEK_API_KEY`，在仓库根目录运行 `python -m hum_api --interactive`。支持自定义 prompt、图片、流式指令回调和本地实验记录；尚未接入摄像头、ASR、TTS 或立绘执行。
 
 **维护起点：2026-11-07（Asia/Shanghai）**。此前实验、协议和待办已退出当前依据；当天起的记录绑定具体版本。旧内容仅保留在 Git 历史，来源与固定依赖继续维护。
 
-启动后默认进行**真人拍照指导**，画面只显示摄像头。用户请求合照时，由模型输出模式标签，客户端重建推理会话并加载**合照互动**提示词。合照模式显示白底立绘窗口，模型看到摄像头及右上角立绘小窗。
+MiniCPM 客户端启动后默认进行**真人拍照指导**，画面只显示摄像头。用户请求合照时，由模型输出模式标签，客户端重建推理会话并加载**合照互动**提示词。合照模式显示白底立绘窗口，模型看到摄像头及右上角立绘小窗。
 
 目前处于提示词实验阶段，尚未形成稳定的真人拍照闭环。合照模式也不代表已经把角色合成进照片或完成拍摄；说话内容暂时打印到控制台，未启用语音播报。
 
-## 快速开始
+## MiniCPM 实时客户端快速开始
 
 需要 Python 3.12、已运行的 MiniCPM-o 服务及 SSH 访问配置。在仓库根目录安装客户端依赖：
 
@@ -47,6 +54,8 @@ curl.exe -k https://localhost:18006/status
 
 | 路径 | 内容 |
 |---|---|
+| `hum_api/`、`requirements-api.txt` | 独立图文 API、命令行、多轮历史与流式回调 |
+| `examples/api_module.py`、`prompts/experiments/` | 模块接入示例和可选择的实验提示词 |
 | `realtime_av_test.py` | 摄像头、麦克风、预览与会话管理 |
 | `prompt.py` | 共用规则 + 指导 / 合照两种提示词 |
 | `command_protocol.py` | 标签解析、校验与角色动作调度 |
@@ -57,9 +66,10 @@ curl.exe -k https://localhost:18006/status
 
 [文档导航](docs/README.md) · [模式与提示词](docs/modes-and-prompts.md) · [接口索引](docs/reference/README.md) · [维护协议](docs/maintenance/README.md) · [来源与版本](docs/reference/upstream-sources.md) · [变更记录](CHANGELOG.md)
 
-本地回归命令：
+全项目本地回归命令（API 独立测试见其使用文档）：
 
 ```powershell
+.\.venv-client\Scripts\python.exe -m pip install -r requirements-api.txt
 .\.venv-client\Scripts\python.exe -m unittest discover -s tests -v
 ```
 

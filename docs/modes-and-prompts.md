@@ -2,6 +2,8 @@
 
 当前实现对应 2026-11-07 的双模式基线 `684d582`。此前方案不定义当前行为。模式决定加载哪份提示词和显示哪种画面；它不限制合法角色动作的执行。
 
+本页的设备、画面和 `session.created` 流程指 MiniCPM 实时客户端。2026-11-13 新增的独立 DeepSeek API 入口复用任务模板和标签解析，使用本地消息历史；其模式确认、custom prompt 和模块接口见 [API 使用说明](api-experiments.md)。
+
 ## 提示词如何组装
 
 [prompt.py](../prompt.py) 保存共用规则和两种模板；[realtime_av_test.py](../realtime_av_test.py) 的 `build_control_prompt` 选择模板并填入会话信息。

@@ -1,0 +1,2 @@
+# Independent of OpenCV, microphone libraries and the GPU backend.
+httpx==0.28.1

@@ -4,6 +4,7 @@
 
 | 目的 | 入口 |
 |---|---|
+| 合作者使用 DeepSeek API 做实验、接入模块 | [API 使用说明](api-experiments.md) |
 | prompt、画面和模式切换 | [模式说明](modes-and-prompts.md) |
 | 目前有证据支持什么 | [实验索引](validation/README.md) |
 | CLI、模型标签和 WebSocket | [接口索引](reference/README.md) |
