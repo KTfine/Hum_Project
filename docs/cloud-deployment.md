@@ -6,7 +6,7 @@
 
 安装入口要求已有 CUDA 环境及 `torch 2.8.0+cu128`，会执行 BF16 GPU 运算检查；随后核对 torchaudio 2.8.0 和 Transformers 4.51.0。脚本不是自动选择 CUDA 版本的通用安装器。实际 GPU、显存、驱动、包版本和模型加载结果应在每次部署中单独记录。
 
-Demo / 模型固定 revision 见 [versions.env](../backend/config/versions.env)。安装器应用独立补丁，拒绝复用不同提交的 Demo checkout；下载写入清单，启动验证后离线加载。
+Demo / 模型固定 revision 见 [versions.env](../config/versions.env)。安装器应用独立补丁，拒绝复用不同提交的 Demo checkout；下载写入清单，启动验证后离线加载。
 
 | 环境变量 | 默认值 |
 |---|---|
@@ -24,8 +24,8 @@ Demo / 模型固定 revision 见 [versions.env](../backend/config/versions.env)�
 在具备上述环境的 Linux GPU 主机执行，数据盘路径替换为自己的可写目录：
 
 ```bash
-git clone https://github.com/KTfine/Hum_Project.git
-cd Hum_Project
+git clone --branch backend --single-branch https://github.com/KTfine/Hum_Project.git Hum_Project-backend
+cd Hum_Project-backend
 export HUMCEN_STORAGE_ROOT=/absolute/path/to/humcen-data
 bash scripts/cloud_install.sh
 bash scripts/cloud_download.sh
@@ -37,6 +37,8 @@ echo $! > logs/service.pid
 安装器单独安装 Token2Wav 依赖，并对 minicpmo-utils 1.0.6 使用 `--no-deps`，依赖版本以脚本和输出的 `logs/runtime-packages.txt` 为准。
 
 服务使用 22500（模型）、22400（Worker）、8006（Gateway）、8007（内部注册），cloud 入口均绑定 127.0.0.1。端口占用会拒绝启动，避免重复加载模型。只转发 8006：
+
+在另一份 main 分支的前端目录中执行：
 
 ```powershell
 .\scripts\connect_tunnel.ps1 -SshHost YOUR_SSH_HOST -SshUser YOUR_SSH_USER
@@ -51,4 +53,4 @@ Linux 上检查 `logs/service-launch.log` 和 `logs/service-ready.txt`。停止�
 
 ## 验证范围
 
-从零安装、补丁应用、模型就绪、chat、video 和真人闭环分别记录。仓库 CI 只做程序 / 脚本 / 固定补丁检查，不证明云端运行或显存足够。单 GPU 与 [Slurm 入口](../backend/README.md) 的目录布局和监听方式不同，不混用。API 见 [接口索引](reference/README.md)。
+从零安装、补丁应用、模型就绪、chat、video 和真人闭环分别记录。仓库 CI 只做程序 / 脚本 / 固定补丁检查，不证明云端运行或显存足够。单 GPU 与 [Slurm 入口](slurm.md) 的目录布局和监听方式不同，不混用。API 见 [接口索引](../CALLING_API.md)。

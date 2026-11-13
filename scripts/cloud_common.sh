@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Shared paths; no account credentials or instance endpoint is stored here.
 HUMCEN_PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
-source "${HUMCEN_PROJECT_ROOT}/backend/config/versions.env"
+source "${HUMCEN_PROJECT_ROOT}/config/versions.env"
 HUMCEN_STORAGE_ROOT="${HUMCEN_STORAGE_ROOT:-${HUMCEN_PROJECT_ROOT}/.runtime}"
 HUMCEN_UPSTREAM_DIR="${HUMCEN_UPSTREAM_DIR:-${HUMCEN_PROJECT_ROOT}/upstream}"
 HUMCEN_VENV_DIR="${HUMCEN_VENV_DIR:-${HUMCEN_PROJECT_ROOT}/.venv}"

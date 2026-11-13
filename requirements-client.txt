@@ -1,3 +1,0 @@
-opencv-python>=4.8,<5
-sounddevice>=0.4.6,<1
-websockets>=12,<17

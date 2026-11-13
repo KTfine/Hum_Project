@@ -1,9 +1,10 @@
-name: Tests
+name: Backend tests
 
 on:
   push:
-    branches: [main]
+    branches: [backend]
   pull_request:
+    branches: [backend]
 
 permissions:
   contents: read
@@ -16,25 +17,21 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
         with:
           python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-api.txt
       - run: python -m pip install -r requirements-api.txt
-      - run: python -m hum_api --help
-      - run: python -m unittest discover -s tests -p test_api_client.py -v
-  regression:
+      - run: python -m api_mode --help
+      - run: python -m unittest discover -s tests -p 'test_api_*.py' -v
+  deployment:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
         with:
           python-version: '3.12'
-          cache: pip
-          cache-dependency-path: requirements-client.txt
-      - name: Install client test dependencies
-        run: python -m pip install -r requirements-client.txt -r requirements-api.txt
-      - name: Run client tests
-        run: python -m unittest discover -s tests -v
       - name: Check shell syntax
         run: |
-          for script in scripts/cloud_*.sh backend/scripts/*.sh backend/slurm/*.sbatch; do
+          for script in scripts/*.sh slurm/*.sbatch; do
             bash -n "$script"
           done
       - name: Fetch pinned patch targets
@@ -49,6 +46,6 @@ jobs:
         env:
           MINICPM_UPSTREAM_DIR: ${{ runner.temp }}/minicpm-patch-fixture
         run: |
-          python backend/scripts/apply_upstream_patches.py "$MINICPM_UPSTREAM_DIR"
-          python backend/scripts/apply_upstream_patches.py "$MINICPM_UPSTREAM_DIR"
-          python -m unittest discover -s backend/tests -p test_duplex_session_options.py -v
+          python scripts/apply_upstream_patches.py "$MINICPM_UPSTREAM_DIR"
+          python scripts/apply_upstream_patches.py "$MINICPM_UPSTREAM_DIR"
+          python -m unittest discover -s tests -p test_duplex_session_options.py -v

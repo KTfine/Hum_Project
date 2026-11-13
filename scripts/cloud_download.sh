@@ -11,7 +11,7 @@ import sys
 from huggingface_hub import snapshot_download
 print(snapshot_download(repo_id=sys.argv[1], revision=sys.argv[2], local_dir=sys.argv[3], max_workers=4), flush=True)
 PY
-.download-venv/bin/python backend/scripts/model_manifest.py write "${HUMCEN_MODEL_DIR}" "${MODEL_REPO}" "${MODEL_REVISION}"
-.download-venv/bin/python backend/scripts/model_manifest.py verify "${HUMCEN_MODEL_DIR}" "${MODEL_REPO}" "${MODEL_REVISION}"
+.download-venv/bin/python scripts/model_manifest.py write "${HUMCEN_MODEL_DIR}" "${MODEL_REPO}" "${MODEL_REVISION}"
+.download-venv/bin/python scripts/model_manifest.py verify "${HUMCEN_MODEL_DIR}" "${MODEL_REPO}" "${MODEL_REVISION}"
 printf '%s\n' "${MODEL_REVISION}" > "${HUMCEN_MODEL_DIR}/.model_revision"
 touch MODEL_READY

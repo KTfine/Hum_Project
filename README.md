@@ -1,76 +1,68 @@
-# Human-Centered AI 拍照助手
+# Hum_Project 后端：MiniCPM + API 模式
 
-拍照指导与二次元伙伴互动原型，提供 **DeepSeek API 实验入口**和 **MiniCPM-o 4.5 实时客户端**，沿用 [AIAA3800](https://github.com/DDRP674/AIAA3800/tree/177d70afd6d8e6d95d619621c61117cef8cd59cd) 的客户端与立绘素材。
+基于 [DDRP674/AIAA3800 的 backend 分支](https://github.com/DDRP674/AIAA3800/tree/backend)，保留原 MiniCPM 部署和探针，在此基础上增加 DeepSeek API 网关。前端仍在 [main 分支](https://github.com/KTfine/Hum_Project/tree/main)，两者通过原 WebSocket 事件格式连接。
 
-| 你想做什么 | 入口 |
+## API 启动
+
+需要 Python 3.12，无需 GPU、模型权重或语音组件。
+
+```powershell
+python -m venv .venv-api
+.\.venv-api\Scripts\python.exe -m pip install -r requirements-api.txt
+$env:DEEPSEEK_API_KEY = '你的 API Key'
+.\.venv-api\Scripts\python.exe -m api_mode
+```
+
+Linux / macOS 使用 `python3 -m venv .venv-api`，再运行 `.venv-api/bin/python -m pip install -r requirements-api.txt`、`export DEEPSEEK_API_KEY='你的 API Key'`、`.venv-api/bin/python -m api_mode`。
+
+默认只监听 `127.0.0.1:8006`，使用 `deepseek-flash`、`thinking=low`。在前端 main 目录运行 `python realtime_av_test.py --backend api`，终端输入用户目标，摄像头继续提供画面。按 Ctrl+C 停止 API 服务。启动 API 不会启动 MiniCPM GPU 进程。
+
+检查入口：
+
+```powershell
+curl.exe http://127.0.0.1:8006/health
+curl.exe http://127.0.0.1:8006/status
+.\.venv-api\Scripts\python.exe -m api_mode --help
+```
+
+health 证明服务存活，不证明 Key、额度或上游模型可用；真实请求失败会发送明确的 error。Key 仅由后端读取环境变量，不写入日志或传给前端。网关未提供用户认证；跨机器使用 SSH 隧道，保持默认回环监听。
+
+## 与原接入的关系
+
+保留 `session.queue_done → session.init → session.created → input.append → response.output.delta / response.done` 流程。API 将文字和最新图片转换为 DeepSeek 图文请求，再把文字流转换回原事件，动作与模式仍由前端解释。
+
+API 支持文字、摄像头帧、多轮上下文、连续观察、流式标签、新输入打断，以及前端重建模式会话。没有新增语音识别、合成或播放；MiniCPM 原有音频路径仍保留。API 不是原生音视频双工实现，也不保证所有 MiniCPM 专有采样配置都生效。
+
+前端发送唯一实际 system prompt，后端不维护额外的拍照角色模板。成功轮次进入有界历史；连续视觉观察只保留近期观察，避免每秒相机帧产生排队请求。新文字输入优先，取消旧输出并发出 `response.interrupted`。
+
+具体字段、错误和模块开发见 [CALLING_API.md](CALLING_API.md)。
+
+## 文件结构
+
+| 路径 | 用途 |
 |---|---|
-| 用 API 测 prompt、图片、多轮对话，和合作者开发模块 | [API 快速开始与模块接口](docs/api-experiments.md)，无需 GPU / SSH |
-| 使用摄像头、麦克风和立绘窗口连接自部署服务 | 下方 MiniCPM 实时客户端说明 |
+| `api_mode/` | 新增 API 网关和 DeepSeek 流式传输 |
+| `requirements-api.txt` | API 服务依赖 |
+| `client/` | 原 health / chat 协议探针 |
+| `config/`、`patches/` | 原 MiniCPM 固定版本、服务配置及补丁 |
+| `scripts/`、`slurm/` | 原部署脚本与 API 启动入口 |
+| `tests/` | API 网关和原部署检查 |
+| `models/`、`logs/` | 本地运行目录，内容忽略 |
+| `docs/` | MiniCPM 部署说明 |
+| `experiments/` | 本分支 API 接入验证记录 |
 
-API 入口：安装 `requirements-api.txt`，设置自己的 `DEEPSEEK_API_KEY`，在仓库根目录运行 `python -m hum_api --interactive`。支持自定义 prompt、图片、流式指令回调和本地实验记录；尚未接入摄像头、ASR、TTS 或立绘执行。
+提示词实验、媒体、实验工具统一放在 [main/experiments](https://github.com/KTfine/Hum_Project/tree/main/experiments)，不复制进后端产品模块。
 
-**维护起点：2026-11-07（Asia/Shanghai）**。此前实验、协议和待办已退出当前依据；当天起的记录绑定具体版本。旧内容仅保留在 Git 历史，来源与固定依赖继续维护。
+## MiniCPM 与验证
 
-MiniCPM 客户端启动后默认进行**真人拍照指导**，画面只显示摄像头。用户请求合照时，由模型输出模式标签，客户端重建推理会话并加载**合照互动**提示词。合照模式显示白底立绘窗口，模型看到摄像头及右上角立绘小窗。
+[单 GPU 部署](docs/cloud-deployment.md) · [Slurm 适配](docs/slurm.md)。脚本仍固定 Demo / 权重版本；本次仅迁移目录，不启动或重新验收 GPU 服务。
 
-目前处于提示词实验阶段，尚未形成稳定的真人拍照闭环。合照模式也不代表已经把角色合成进照片或完成拍摄；说话内容暂时打印到控制台，未启用语音播报。
-
-## MiniCPM 实时客户端快速开始
-
-需要 Python 3.12、已运行的 MiniCPM-o 服务及 SSH 访问配置。在仓库根目录安装客户端依赖：
-
-```powershell
-python -m venv .venv-client
-.\.venv-client\Scripts\python.exe -m pip install -r requirements-client.txt
-```
-
-在单独的 PowerShell 窗口建立隧道，填入自己的连接信息并保持窗口打开：
+API 离线回归：
 
 ```powershell
-.\scripts\connect_tunnel.ps1 -SshHost YOUR_SSH_HOST -SshPort 22 -SshUser YOUR_SSH_USER
+.\.venv-api\Scripts\python.exe -m unittest discover -s tests -p "test_api_*.py" -v
 ```
 
-回到仓库窗口，检查连接并启动客户端：
+GitHub Actions 另外检查部署脚本语法和固定补丁。真人摄像头、姿势识别质量和模型延迟须分别记录，不能由程序测试代替。
 
-```powershell
-curl.exe -k https://localhost:18006/health
-curl.exe -k https://localhost:18006/status
-.\scripts\start_client.ps1
-```
-
-客户端会使用摄像头和麦克风。可以先说“帮我看看站姿”，再试“切换到合照模式”或“恢复指导模式”。这些话由模型理解，客户端没有关键词开关。窗口按 **Q** 或终端按 **Ctrl+C** 退出，一次运行一个客户端。部署新服务见 [单 GPU 部署](docs/cloud-deployment.md)。
-
-## 当前基线证据
-
-2026-11-07 保持提示词不变，完成 **32 种表达、98 次纯文本调用**，没有启用摄像头或麦克风：
-
-- 需要切换的请求中，**33/65** 生成正确模式标签；不应切换的对照 **33/33** 没有误切换。
-- “切换到合照模式”3/3、“恢复指导模式”4/4；“和我合照”2/4、“退出合照”0/3。
-- 主要问题是模型口头答应切换，却没有输出可执行标签。少量重复不能证明稳定性，纯文本结果也不等于实时音视频通过。
-
-逐句结果、条件和限制见 [实验记录](docs/validation/2026-11-07-text-mode-switch.md)，对应 prompt / 画面实现 `684d582`。73 项程序回归覆盖模拟会话、画面选择和流式执行；与真实模型效果分别记录。新实验及本轮维护核对统一收录在 [实验索引](docs/validation/README.md)。
-
-## 项目结构
-
-| 路径 | 内容 |
-|---|---|
-| `hum_api/`、`requirements-api.txt` | 独立图文 API、命令行、多轮历史与流式回调 |
-| `examples/api_module.py`、`prompts/experiments/` | 模块接入示例和可选择的实验提示词 |
-| `realtime_av_test.py` | 摄像头、麦克风、预览与会话管理 |
-| `prompt.py` | 共用规则 + 指导 / 合照两种提示词 |
-| `command_protocol.py` | 标签解析、校验与角色动作调度 |
-| `tachie/` | 上游立绘素材 |
-| `scripts/`、`backend/` | 启动、部署、固定版本和后端补丁 |
-| `tests/`、`tools/` | 回归检查与显式时间线重放工具 |
-| `docs/` | 当前说明、当天起的实验、维护协议和接口参考 |
-
-[文档导航](docs/README.md) · [模式与提示词](docs/modes-and-prompts.md) · [接口索引](docs/reference/README.md) · [维护协议](docs/maintenance/README.md) · [来源与版本](docs/reference/upstream-sources.md) · [变更记录](CHANGELOG.md)
-
-全项目本地回归命令（API 独立测试见其使用文档）：
-
-```powershell
-.\.venv-client\Scripts\python.exe -m pip install -r requirements-api.txt
-.\.venv-client\Scripts\python.exe -m unittest discover -s tests -v
-```
-
-GitHub Actions 另检查部署脚本语法及固定上游补丁；不运行 GPU 或真人摄像头实验。原始会话日志和个人媒体留在本地忽略目录，仓库只保存公开结果摘要。
+上游导入提交、Demo 与模型固定版本见 [来源与版本](docs/upstream-sources.md)。

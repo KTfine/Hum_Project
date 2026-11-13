@@ -19,7 +19,7 @@ if [[ ! -d "${HUMCEN_UPSTREAM_DIR}" ]]; then
     git -C "${HUMCEN_UPSTREAM_DIR}" checkout --detach FETCH_HEAD
 fi
 [[ "$(git -C "${HUMCEN_UPSTREAM_DIR}" rev-parse HEAD)" == "${DEMO_COMMIT}" ]] || { echo 'Unexpected Demo revision' >&2; exit 1; }
-"${python_bin}" backend/scripts/apply_upstream_patches.py "${HUMCEN_UPSTREAM_DIR}"
+"${python_bin}" scripts/apply_upstream_patches.py "${HUMCEN_UPSTREAM_DIR}"
 "${python_bin}" -m venv --system-site-packages "${HUMCEN_VENV_DIR}"
 py="${HUMCEN_VENV_DIR}/bin/python"
 "${py}" -m pip install --no-cache-dir 'torchaudio==2.8.0' --no-deps --index-url https://download.pytorch.org/whl/cu128
@@ -32,7 +32,7 @@ lines += ['huggingface_hub==0.33.4', 'decord==0.6.0', 'pillow==10.4.0', 'moviepy
 Path(sys.argv[2]).write_text('\n'.join(lines) + '\n')
 PY
 # The toolkit metadata pins old librosa; the Demo's newer requirement is used.
-"${py}" -m pip install --no-cache-dir -r logs/runtime-requirements.txt -r backend/config/tts-requirements.txt
+"${py}" -m pip install --no-cache-dir -r logs/runtime-requirements.txt -r config/tts-requirements.txt
 "${py}" -m pip install --no-cache-dir --no-deps 'minicpmo-utils==1.0.6'
 "${py}" - <<'PY'
 import torch, torchaudio, transformers, einops, onnx, onnxruntime, hyperpyyaml, stepaudio2, librosa

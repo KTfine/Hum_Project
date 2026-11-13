@@ -21,8 +21,8 @@ for port in (8006, 8007, 22400, 22500):
 if busy:
     raise SystemExit(f'Service ports already in use: {busy}. Stop the existing service before starting another.')
 PY
-"$py" "$root/backend/scripts/apply_upstream_patches.py" "${HUMCEN_UPSTREAM_DIR}"
-"$py" "$root/backend/scripts/model_manifest.py" verify "$model" openbmb/MiniCPM-o-4_5 503e754207c94da6bb26850b4469f367c9ea3582
+"$py" "$root/scripts/apply_upstream_patches.py" "${HUMCEN_UPSTREAM_DIR}"
+"$py" "$root/scripts/model_manifest.py" verify "$model" openbmb/MiniCPM-o-4_5 503e754207c94da6bb26850b4469f367c9ea3582
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_HUB_DISABLE_TELEMETRY=1
 export PYTHONPATH="${HUMCEN_UPSTREAM_DIR}"
 export OMP_NUM_THREADS=8
@@ -46,7 +46,7 @@ fi
 import json,sys
 from pathlib import Path
 root,model,upstream,data_dir=Path(sys.argv[1]),sys.argv[2],Path(sys.argv[3]),sys.argv[4]
-config=json.loads((root/'backend/config/service.json').read_text())
+config=json.loads((root/'config/service.json').read_text())
 config['model']['model_path']=model
 config['model']['attn_implementation']='sdpa'
 config['service']['data_dir']=data_dir
