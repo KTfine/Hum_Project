@@ -20,6 +20,8 @@ upstream/
 !**/models/.gitkeep
 data/
 runtime_results/
+/experiments/runtime/
+/experiments/*.local.json
 certs/
 *.pem
 *.key

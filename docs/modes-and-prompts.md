@@ -2,7 +2,7 @@
 
 当前实现对应 2026-11-07 的双模式基线 `684d582`。此前方案不定义当前行为。模式决定加载哪份提示词和显示哪种画面；它不限制合法角色动作的执行。
 
-本页的设备、画面和 `session.created` 流程指 MiniCPM 实时客户端。2026-11-13 新增的独立 DeepSeek API 入口复用任务模板和标签解析，使用本地消息历史；其模式确认、custom prompt 和模块接口见 [API 使用说明](api-experiments.md)。
+本页描述 `realtime_av_test.py` 的提示词、画面和 `session.created` 流程。原 MiniCPM 模式保留麦克风与摄像头输入；`--backend api` 通过 backend 分支的 API 网关输入终端文字和摄像头画面，不启用 ASR/TTS。两者共用模式切换与立绘执行。另有独立图文实验工具，使用自己的本地消息历史；其模式确认、custom prompt 和模块接口见 [实验工具说明](api-experiments.md)。
 
 ## 提示词如何组装
 
@@ -14,12 +14,12 @@
 | `PHOTO_GUIDANCE_PROMPT` | 共用规则 + 真人拍照指导职责；默认使用，不含立绘目录、几何状态或动作协议 |
 | `CO_PHOTO_COMMAND_PROMPT` | 共用规则 + 合照职责、角色小窗说明、立绘目录、当前几何状态和动作协议 |
 
-组装时填入角色名称、设定、中文回复语言、当前模式的起始上下文和简短麦克风交互说明；合照模板还使用可用立绘 ID 及角色状态。这里的上下文是新会话说明，不是旧对话历史的摘要。修改 prompt.py 后重启本地客户端即可，不需要修改服务或重载 GPU 权重。
+组装时填入角色名称、设定、中文回复语言、当前模式的起始上下文和输入渠道说明；合照模板还使用可用立绘 ID 及角色状态。这里的上下文是新会话说明，不是旧对话历史的摘要。提示词由前端组装并发送，API 后端不另外复制任务模板。修改 prompt.py 后重启本地客户端即可，不需要修改服务或重载 GPU 权重。
 
 ## 模式切换
 
 1. 启动时选择 `guidance`，发送对应 system_prompt。
-2. 用户说话，模型决定是否生成 `<mode:co-photo>` 或 `<mode:guidance>`。
+2. 用户说话（MiniCPM）或输入文字（API），模型决定是否生成 `<mode:co-photo>` 或 `<mode:guidance>`。
 3. 解析器收到完整标签后，记录 `session.mode_requested`，请求切换。
 4. 客户端关闭旧推理会话，使用对应提示词创建新会话。
 5. 收到 `session.created` 后，才记录 `session.mode_ready`、更新 ON/OFF 状态并切换画面。
@@ -28,7 +28,7 @@
 
 ON/OFF 只表示最后成功加载的提示词：OFF = guidance，ON = co-photo。尚未成功加载时没有已就绪模式。控制台显示 `[mode] loaded: OFF (guidance)` 或 `[mode] loaded: ON (co-photo)`，本地 JSONL 中也记录模式与 `include_character`。
 
-切换保留设备连接及角色的位置、缩放、旋转状态；旧音视频上下文会重置，未结构化保存的目标不保证继承。它只重建推理会话，不重新加载模型权重。
+切换保留设备连接及角色的位置、缩放、旋转状态；旧会话上下文会重置，未结构化保存的目标不保证继承。它只重建推理会话，不重新加载模型权重。
 
 ## 画面与动作
 
@@ -51,6 +51,6 @@ ON/OFF 只表示最后成功加载的提示词：OFF = guidance，ON = co-photo�
 
 `--prompt` 或重放工具的 `--prompt-file` 完整覆盖内置提示词，记录为 custom，不自动替换模板，保留原立绘预览和带立绘小窗的模型输入。旧 photo:enter 只保留解析兼容，不再触发入画或切换；旧 action-only 和手动模式启动选项已移除。
 
-`tools/runtime_effect_probe.py` 使用相同模式逻辑，可重放录音并记录角色状态；它不是新的提示词模式，也不代表真人实验。必须显式提供本轮时间线，不再附带旧动作默认用例。参数见 [客户端 CLI](reference/client-cli.md)，字段见 [标签协议](reference/command-protocol.md) 和 [Realtime API](reference/realtime-api.md)。
+`experiments/scripts/runtime_effect_probe.py` 使用相同模式逻辑，可重放录音并记录角色状态；它不是新的提示词模式，也不代表真人实验。必须显式提供本轮时间线，不再附带旧动作默认用例。参数见 [客户端 CLI](reference/client-cli.md)，字段见 [标签协议](reference/command-protocol.md) 和 [Realtime API](reference/realtime-api.md)。
 
-当前模型效果及限制见 [验证索引](validation/README.md)。
+当前模型效果及限制见 [验证索引](../experiments/records/README.md)。

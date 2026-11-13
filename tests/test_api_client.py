@@ -9,8 +9,8 @@ from unittest.mock import patch
 
 import httpx
 
-from hum_api import ApiError, DeepSeekClient, Image, PhotoSession, build_prompt
-from hum_api.__main__ import parse_args, run
+from experiments.scripts.hum_api import ApiError, DeepSeekClient, Image, PhotoSession, build_prompt
+from experiments.scripts.hum_api.__main__ import parse_args, run
 
 
 def event(text='', finish=None, **extra):
@@ -198,7 +198,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
             log = Path(tmp) / 'run.jsonl'
             real = DeepSeekClient
             factory = lambda **kw: real('unit-secret', transport=httpx.MockTransport(lambda r: response('<speak:好>')), **kw)
-            with patch('hum_api.__main__.DeepSeekClient', factory), redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            with patch('experiments.scripts.hum_api.__main__.DeepSeekClient', factory), redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
                 code = await run(parse_args(['--text','hello','--log-file',str(log)]))
             data = log.read_text(encoding='utf-8')
             self.assertEqual(code, 0)

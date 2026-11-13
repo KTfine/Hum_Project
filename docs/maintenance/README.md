@@ -22,10 +22,10 @@
 2. 记录代码 commit、工作区差异、实际发送 system prompt 的 SHA-256、输入类型、接口模式、采样配置及服务版本。只有 prompt.py 哈希不能识别角色参数和自定义覆盖。
 3. 分开报告程序回归、纯文本、图文、录音重放和真人实时音视频。每项结论仅适用于实际覆盖的范围。
 4. 保存所有尝试，包括连接失败、无回复、漏标签、误切换和被打断。分别统计原生标签、裸文字适配、实际执行和内容正确性，不能用控制台 speak 证明模型原生标签合格。
-5. 按 [记录模板](experiment-template.md) 新建 `docs/validation/YYYY-MM-DD-主题.md` 并更新索引。原始日志、媒体和本机脚本放入忽略目录 `runtime_results/`，公开仓库只保存必要摘要。
+5. 按 [记录模板](../../experiments/templates/report.md) 新建 `experiments/records/YYYY-MM-DD-主题.md` 并更新 [记录索引](../../experiments/records/README.md)。候选提示词放 experiments/prompts/，可维护实验脚本放 experiments/scripts/，原始日志、媒体和本机脚本放忽略目录 experiments/runtime/；公开仓库只保存必要摘要与可复用实验入口。
 6. 新 prompt 重新验证，旧成功率不自动转移。当天撤销方案标记“已替代”，保留真实结果；此前记录不进入新统计、不派生待办、不约束新方案。
 
-[真人评估](human-evaluation.md) 是后续测试设计，不自动写入 prompt，也不是已经得到的模型结论。
+[真人评估](../../experiments/plans/human-evaluation.md) 是后续测试设计，不自动写入 prompt，也不是已经得到的模型结论。
 
 ## 版本与发布协议
 
@@ -38,4 +38,4 @@
 
 ## 文档归属
 
-README 负责启动与能力；模式说明负责行为；reference 负责接口与来源；validation 负责有版本的事实；本目录负责今后的工作规则。冲突时对照运行代码和本轮用户要求修正文档，不用旧实验覆盖当前实现。
+README 负责启动与能力；模式说明负责行为；reference 负责接口与来源；experiments/ 统一保存有版本的实验事实、实验工具和评估材料；本目录负责今后的工作规则。冲突时对照运行代码和本轮用户要求修正文档，不用旧实验覆盖当前实现。

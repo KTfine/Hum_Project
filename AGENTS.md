@@ -1,9 +1,10 @@
 # 维护入口：2026-11-07 起
 
-修改前阅读 [维护协议](docs/maintenance/README.md)、[模式说明](docs/modes-and-prompts.md) 和 [实验索引](docs/validation/README.md)。
+修改前阅读 [维护协议](docs/maintenance/README.md)、[模式说明](docs/modes-and-prompts.md) 和 [实验入口](experiments/README.md)。
 
 - 以 2026-11-07（Asia/Shanghai）的双模式实现为起点；此前的实验、待办和维护规则全部退出当前依据，不从 Git 历史恢复为要求。
 - 指导模式不显示虚拟角色，不注入立绘目录、几何状态或角色动作协议；这些内容只放合照模板。
 - 保留单行连续标签、跨分块解析和闭合即执行；模式不作为动作权限。
 - 完成用户已授权的工作；提示词实验聚焦本轮问题，不擅自增加实验目标。
 - 记录真实版本、条件和结果；未验证不记为通过，不覆盖其他聊天正在产生的实验文件。
+- 实验记录、候选提示词、脚本、评估计划和原始材料统一放在 experiments/；runtime/ 原始材料保持本地忽略，不改写历史证据。

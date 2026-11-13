@@ -3,11 +3,13 @@
 import argparse
 import asyncio
 import base64
+import codecs
 from collections import deque
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 import json
 import math
+import os
 from pathlib import Path
 import ssl
 import sys
@@ -115,6 +117,113 @@ class AudioInputBuffer:
             data = bytes(self._data)
             self._data.clear()
         return data + (b"\x00" * (self.chunk_bytes - len(data)))
+
+
+class ConsoleTextInput:
+    """One nonblocking input source and pending queue for all model sessions.
+
+    The sender acknowledges a line only after websocket.send succeeds. Mode
+    changes therefore cannot discard a line waiting to be sent. No blocking
+    input()/executor thread is created for each reconnect.
+    """
+
+    def __init__(self, stream=None) -> None:
+        self.stream = sys.stdin if stream is None else stream
+        self.pending: deque[str] = deque()
+        self.eof = False
+        self._line = ""
+        encoding = getattr(self.stream, "encoding", None) or "utf-8"
+        self._decoder = codecs.getincrementaldecoder(encoding)(errors="replace")
+
+    def put(self, text: str) -> None:
+        if text.strip():
+            self.pending.append(text.strip())
+
+    def peek(self) -> str | None:
+        return self.pending[0] if self.pending else None
+
+    def acknowledge(self, text: str) -> None:
+        if self.pending and self.pending[0] == text:
+            self.pending.popleft()
+
+    def _accept_text(self, text: str, *, final: bool = False) -> None:
+        self._line += text
+        while "\n" in self._line:
+            line, self._line = self._line.split("\n", 1)
+            self.put(line)
+        if final:
+            self.put(self._line)
+            self._line = ""
+            self.eof = True
+
+    def _read_available(self) -> bytes | None:
+        """None means no data yet; b'' means EOF, including a closed pipe."""
+        descriptor = self.stream.fileno()
+        if os.name == "nt":
+            import ctypes
+            import msvcrt
+            from ctypes import wintypes
+
+            kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+            handle = wintypes.HANDLE(msvcrt.get_osfhandle(descriptor))
+            if kernel.GetFileType(handle) == 3:  # FILE_TYPE_PIPE
+                available = wintypes.DWORD()
+                if not kernel.PeekNamedPipe(handle, None, 0, None,
+                                            ctypes.byref(available), None):
+                    error = ctypes.get_last_error()
+                    if error in (109, 232):  # broken / disconnected pipe
+                        return b""
+                    raise OSError(error, "Cannot read console input pipe")
+                if not available.value:
+                    return None
+                return os.read(descriptor, min(available.value, 4096))
+        else:
+            import select
+
+            if not select.select([descriptor], [], [], 0)[0]:
+                return None
+        return os.read(descriptor, 4096)
+
+    def poll(self) -> None:
+        if self.eof:
+            return
+        if os.name == "nt" and self.stream.isatty():
+            import msvcrt
+
+            while msvcrt.kbhit():
+                char = msvcrt.getwch()
+                if char in ("\x00", "\xe0"):
+                    msvcrt.getwch()  # consume the second half of an arrow/function key
+                elif char == "\x03":
+                    raise KeyboardInterrupt
+                elif char in ("\x04", "\x1a") and not self._line:
+                    self.eof = True
+                    break
+                elif char in ("\r", "\n"):
+                    self._accept_text("\n")
+                    print(flush=True)
+                elif char == "\b":
+                    if self._line:
+                        self._line = self._line[:-1]
+                        print("\b \b", end="", flush=True)
+                elif char >= " ":
+                    self._line += char
+                    print(char, end="", flush=True)
+            return
+        chunk = self._read_available()
+        if chunk is not None:
+            self._accept_text(self._decoder.decode(chunk, final=not chunk), final=not chunk)
+
+    async def run(self, stop_event: threading.Event) -> None:
+        while not stop_event.is_set() and not self.eof:
+            try:
+                self.poll()
+            except (OSError, ValueError) as exc:
+                print(f"[input] console input unavailable: {exc}", file=sys.stderr, flush=True)
+                self.eof = True
+            await asyncio.sleep(0.05)
+        if self.eof and not stop_event.is_set():
+            print("[input] EOF; camera monitoring continues", flush=True)
 
 
 class MicrophoneSource:
@@ -710,6 +819,8 @@ def decode_output_event(event: dict) -> tuple[str, object]:
         return "closed", event.get("reason", "unknown")
     if event_type == "response.done":
         return "done", event.get("text", "")
+    if event_type == "response.interrupted":
+        return "interrupted", event.get("reason", "new_input")
     if event_type != "response.output.delta":
         return "other", event
     kind = event.get("kind")
@@ -807,6 +918,7 @@ async def send_realtime_inputs(
     *,
     event_log: FrontendEventLogger | None = None,
     include_character: bool = True,
+    text_input: ConsoleTextInput | None = None,
 ) -> None:
     """Send audio and the image layout selected for this inference session."""
     loop = asyncio.get_running_loop()
@@ -817,7 +929,12 @@ async def send_realtime_inputs(
         jpeg = canvas.latest_jpeg(camera_frame, include_character=include_character)
         sequence += 1
         message = build_video_input(sequence, audio_buffer.pop_chunk(), jpeg)
+        text = text_input.peek() if text_input is not None else None
+        if text is not None:
+            message["input"]["text"] = text
         await websocket.send(json.dumps(message, ensure_ascii=False))
+        if text is not None:
+            text_input.acknowledge(text)
         if event_log is not None:
             event_log.record_message("gateway.send", message)
         next_tick += 1.0
@@ -901,6 +1018,7 @@ async def receive_realtime_outputs(
     """Dispatch tag commands and adapt untagged model text into speech."""
     parser = StreamingCommandParser(allow_plain_speech=True)
     active_response_id = None
+    interrupted_response_ids = set()
     while not stop_event.is_set():
         raw = await websocket.recv()
         event = json.loads(raw)
@@ -908,6 +1026,22 @@ async def receive_realtime_outputs(
             event_log.record_message("gateway.receive", event)
         kind, value = decode_output_event(event)
         response_id = event.get("response_id")
+
+        if kind == "interrupted":
+            interrupted_id = response_id or active_response_id
+            if interrupted_id is not None:
+                interrupted_response_ids.add(interrupted_id)
+            if interrupted_id == active_response_id:
+                parser.flush()
+                active_response_id = None
+                print()
+            if event_log is not None:
+                event_log.record("parser.interrupted", response_id=interrupted_id)
+            continue
+        if response_id is not None and response_id in interrupted_response_ids:
+            if event_log is not None:
+                event_log.record("parser.stale_output_ignored", response_id=response_id, kind=kind)
+            continue
 
         if kind == "text":
             if response_id != active_response_id:
@@ -967,6 +1101,10 @@ def build_control_prompt(
     mode = "guidance" if mode is None else mode
     templates = {"guidance": PHOTO_GUIDANCE_PROMPT, "co-photo": CO_PHOTO_COMMAND_PROMPT}
     template = templates[mode]
+    api_mode = getattr(args, "backend", "minicpm") == "api"
+    if api_mode:
+        template = template.replace("你持续接收用户麦克风音频和摄像头画面。",
+                                    "你持续接收用户文字输入和摄像头画面。")
     return template.format(
         character_name=args.character_name,
         character_persona=args.character_persona,
@@ -977,7 +1115,8 @@ def build_control_prompt(
         ),
         recent_context=("开始合照互动的新会话。"
                         if mode == "co-photo" else "开始真人拍照指导的新会话。"),
-        extra_instructions="用户通过麦克风与你说话；保持回复简短。",
+        extra_instructions=("用户通过文字输入与你交流；你会持续收到摄像头画面；保持回复简短。"
+                            if api_mode else "用户通过麦克风与你说话；保持回复简短。"),
     )
 
 
@@ -1019,7 +1158,7 @@ async def close_model_session(websocket, reason, event_log=None) -> None:
 
 async def run_realtime_sessions(
     connect, ws_url, ssl_context, canvas, camera, audio_buffer,
-    speech_queue, stop_event, args, *, event_log=None, mode_selection=None,
+    speech_queue, stop_event, args, *, event_log=None, mode_selection=None, text_input=None,
 ) -> None:
     """Reload task prompts from model mode tags; mode never gates actions."""
     selection = mode_selection if mode_selection is not None else ModeSelection()
@@ -1058,6 +1197,7 @@ async def run_realtime_sessions(
             sender = asyncio.create_task(send_realtime_inputs(
                 websocket, canvas, camera, audio_buffer, stop_event, event_log=event_log,
                 include_character=include_character,
+                text_input=text_input,
             ), name="realtime-sender")
             receiver = asyncio.create_task(receive_realtime_outputs(
                 websocket, stop_event, canvas, speech_queue, verbose=args.verbose,
@@ -1111,6 +1251,7 @@ async def run_probe(
     canvas.configure_view(camera, show_character=bool(args.prompt))
     microphone = None if args.no_mic else MicrophoneSource(audio_buffer, args.input_device)
     speech_queue = SpeechQueue()
+    text_input = ConsoleTextInput() if getattr(args, "backend", "minicpm") == "api" else None
     ws_url = normalize_video_ws_url(args.url)
     ssl_context = make_tls_context(args.insecure) if ws_url.startswith("wss://") else None
 
@@ -1133,6 +1274,7 @@ async def run_probe(
         event_log.record(
             "client.start",
             url=ws_url,
+            backend=getattr(args, "backend", "minicpm"),
             sprite_dir=str(args.sprite_dir),
             sprite_ids=canvas.sprite_ids,
             initial_sprite=args.initial_sprite,
@@ -1150,15 +1292,22 @@ async def run_probe(
         flush=True,
     )
     print("[controls] press Q in the canvas window or Ctrl+C to stop", flush=True)
-    print("[audio] MiniCPM-o TTS is disabled; model text is printed below", flush=True)
+    print("[audio] TTS is disabled; model text is printed below", flush=True)
+    if text_input is not None:
+        print("[input] type a goal, correction, or mode request and press Enter", flush=True)
 
+    input_task = asyncio.create_task(text_input.run(stop_event)) if text_input is not None else None
     try:
         await run_realtime_sessions(
             websockets.connect, ws_url, ssl_context, canvas, camera,
             audio_buffer, speech_queue, stop_event, args, event_log=event_log,
+            text_input=text_input,
         )
     finally:
         stop_event.set()
+        if input_task is not None:
+            input_task.cancel()
+            await asyncio.gather(input_task, return_exceptions=True)
         if microphone is not None:
             microphone.close()
         canvas.close()
@@ -1172,13 +1321,16 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Send microphone audio plus webcam video (character inset in co-photo/custom) to "
-            "MiniCPM-o, then apply streamed tag commands."
+            "MiniCPM-o, or text plus webcam video to the API gateway; apply streamed tag commands."
         )
     )
     parser.add_argument(
+        "--backend", choices=("minicpm", "api"), default="minicpm",
+        help="model gateway (API mode uses console text and leaves the microphone off)",
+    )
+    parser.add_argument(
         "--url",
-        default="https://localhost:8006",
-        help="Gateway base URL or full realtime WebSocket URL",
+        help="Gateway URL (default: MiniCPM https://localhost:8006; API http://127.0.0.1:8006)",
     )
     parser.add_argument(
         "--sprite-dir", type=Path, default=Path("tachie/sanae"), help="PNG directory"
@@ -1215,11 +1367,15 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument(
         "--log-file",
         type=Path,
-        help="JSONL frontend log path (default: logs/frontend-<timestamp>.jsonl)",
+        help="JSONL log path (default: experiments/runtime/frontend-<timestamp>.jsonl)",
     )
     parser.add_argument("--connect-timeout", type=float, default=10.0)
     parser.add_argument("--session-timeout", type=float, default=120.0)
     args = parser.parse_args(argv)
+    if args.url is None:
+        args.url = "http://127.0.0.1:8006" if args.backend == "api" else "https://localhost:8006"
+    if args.backend == "api":
+        args.no_mic = True
     if not 1 <= args.jpeg_quality <= 100:
         parser.error("--jpeg-quality must be between 1 and 100")
     if args.canvas_width <= 0 or args.canvas_height <= 0:
@@ -1229,7 +1385,7 @@ def parse_args(argv=None) -> argparse.Namespace:
 
 def main(argv=None) -> int:
     args = parse_args(argv)
-    log_path = args.log_file or Path("logs") / (
+    log_path = args.log_file or Path("experiments/runtime") / (
         f"frontend-{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}.jsonl"
     )
     event_log = FrontendEventLogger(log_path)

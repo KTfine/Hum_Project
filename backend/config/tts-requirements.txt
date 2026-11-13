@@ -1,8 +1,0 @@
-# minicpmo-utils 1.0.6 bundles Token2Wav modules but its legacy resolver path
-# does not install the TTS extra dependencies reliably.
-einops==0.8.1
-onnx
-onnxruntime>=1.18.0,<=1.21.0
-hyperpyyaml
-soundfile==0.12.1
-scipy>=1.10.0

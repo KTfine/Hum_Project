@@ -175,10 +175,10 @@ class PromptHandoffTests(unittest.IsolatedAsyncioTestCase):
         camera.close.assert_called_once()
 
     async def test_replay_uses_the_same_two_mode_prompts(self):
-        from tools import runtime_effect_probe as probe
+        from experiments.scripts import runtime_effect_probe as probe
         root = Path(self.folder.name)
-        media = root/'runtime_results'
-        media.mkdir()
+        media = root/'experiments'/'runtime'
+        media.mkdir(parents=True)
         with wave.open(str(media/'cmd.wav'), 'wb') as output:
             output.setparams((1, 2, 16000, 0, 'NONE', 'not compressed'))
             output.writeframes(b'\0'*32000)

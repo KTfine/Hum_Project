@@ -1,6 +1,14 @@
 # Realtime API：当前项目使用范围
 
-基于固定 [MiniCPM-o Demo](https://github.com/OpenBMB/MiniCPM-o-Demo/tree/47709a9210dfd71afa76c058e017fc8c4db5c8d2) 及本仓库补丁。字段已对照本地客户端消息构造器和该固定版本源码；本文不继承重置前实验结论。它是 MiniCPM-o WebSocket 接口，不是 `/v1/chat/completions`。
+前端保留原 WebSocket 会话与文本事件结构。MiniCPM 部分基于固定 [MiniCPM-o Demo](https://github.com/OpenBMB/MiniCPM-o-Demo/tree/47709a9210dfd71afa76c058e017fc8c4db5c8d2) 及 backend 分支补丁；API 网关复用前端需要的生命周期与文本事件，内部调用 DeepSeek HTTP API。完整服务接口见 [backend/CALLING_API.md](https://github.com/KTfine/Hum_Project/blob/backend/CALLING_API.md)。
+
+## API 网关
+
+`python realtime_av_test.py --backend api` 默认连接 `ws://127.0.0.1:8006/v1/realtime?mode=video`。前端传入已组装的 system prompt；收到 `session.created` 后持续发送当前相机帧，终端输入文字时附在同一输入消息中。网关输出 `response.output.delta` 文本增量和 `response.done`，前端继续解析 speak、mode 和立绘动作标签。
+
+完成首轮用户请求后，网关在有新帧且当前生成结束时继续观察，默认间隔为 8 秒；后端 `--visual-interval 0` 可关闭自动观察。新文字优先，打断旧输出并发出 `response.interrupted`，由前端清理未闭合的解析片段。持续观察能力及模型判断质量仍需分别验证。
+
+这一模式不使用音频输入或生成音频。不能把下面 MiniCPM 的 Float32 音频块、`force_listen` 或双工生成配置当作 API 模型原生能力。Key 保留在后端。以下章节记录原 MiniCPM 接口。
 
 ## 地址与生命周期
 
@@ -46,10 +54,10 @@ health 响应不等于 Worker 可推理。当前启动脚本注册一个 Worker�
 
 ## chat 输入
 
-通用连接探针不加载拍照助手 prompt：
+通用连接探针位于 [backend 分支 client/](https://github.com/KTfine/Hum_Project/tree/backend/client)，不加载拍照助手 prompt。在 backend 分支的独立工作目录执行：
 
 ```powershell
-python backend/client/text_chat.py --url https://localhost:18006 --insecure --pretty --prompt "请只回复：连接成功"
+python client/text_chat.py --url https://localhost:18006 --insecure --pretty --prompt "请只回复：连接成功"
 ```
 
 chat 初始化使用空 payload，输入示例如下；实验须自行传入实际 system 内容并记录配置：
